@@ -84,6 +84,30 @@ button:disabled {
   opacity: 0.9;
 }
 
+.game-viewport[data-environment="sunsetGlare"]::before {
+  background:
+    radial-gradient(circle at 42% 18%, rgba(255, 217, 112, 0.36) 0 8%, rgba(255, 136, 70, 0.2) 22%, transparent 46%),
+    radial-gradient(circle at 50% 42%, transparent 0 38%, rgba(72, 22, 10, 0.28) 70%, rgba(18, 8, 5, 0.62) 100%);
+}
+
+.game-viewport[data-environment="sunsetGlare"].is-dueling::before {
+  opacity: 0.92;
+}
+
+.game-viewport[data-environment="dustStorm"]::before {
+  background:
+    repeating-linear-gradient(11deg, rgba(226, 174, 96, 0.08) 0 2px, transparent 2px 14px),
+    radial-gradient(circle at 50% 44%, rgba(222, 168, 91, 0.12) 0 34%, rgba(82, 43, 17, 0.34) 76%, rgba(24, 13, 7, 0.62) 100%);
+}
+
+.game-viewport[data-environment="dustStorm"].is-dueling::before {
+  opacity: 0.86;
+}
+
+.game-viewport[data-modifier="no-reticle"].is-aiming {
+  cursor: none;
+}
+
 .game-viewport canvas {
   position: absolute;
   inset: 0;
@@ -535,7 +559,7 @@ button:disabled {
 
 .bounty-list {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 18px 14px;
   padding: 8px 4px 16px;
 }
@@ -671,6 +695,20 @@ button:disabled {
   padding: 5px 0;
 }
 
+.poster-modifier {
+  position: relative;
+  z-index: 1;
+  display: block;
+  border: 2px solid color-mix(in srgb, var(--poster-accent), var(--poster-ink) 28%);
+  background: color-mix(in srgb, var(--poster-accent), transparent 82%);
+  color: color-mix(in srgb, var(--poster-ink), #210d05 12%);
+  font-size: 0.68rem;
+  font-weight: 950;
+  line-height: 1.1;
+  padding: 5px 4px;
+  text-transform: uppercase;
+}
+
 .poster-description {
   margin: 0;
   position: relative;
@@ -679,6 +717,16 @@ button:disabled {
   font-size: 0.78rem;
   font-weight: 750;
   line-height: 1.28;
+}
+
+.poster-modifier-description {
+  margin: 0;
+  position: relative;
+  z-index: 1;
+  color: color-mix(in srgb, var(--poster-shadow), var(--poster-ink) 8%);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.2;
 }
 
 .poster-tell {

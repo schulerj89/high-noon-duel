@@ -10,7 +10,12 @@ export type DuelPhase =
   | "missed"
   | "resolved";
 export type DuelOutcome = "win" | "loss";
-export type DuelResultReason = "clean shot" | "enemy was faster" | "early draw" | "missed shot";
+export type DuelResultReason =
+  | "clean shot"
+  | "enemy was faster"
+  | "early draw"
+  | "missed shot"
+  | "rule violation";
 
 export interface CountdownTiming {
   standoffDurationMs: number;
@@ -31,6 +36,10 @@ export interface DuelStats {
   waitedOutFakeout?: boolean;
   aimDisrupted?: boolean;
   behaviorResultText?: string;
+  modifierId?: string;
+  modifierName?: string;
+  modifierRewardMultiplier?: number;
+  modifierResultText?: string;
 }
 
 export interface DuelResult {
@@ -176,6 +185,44 @@ export function recordPlayerMiss(
       shotResult: shotScore.shotResult
     }
   };
+}
+
+export function resolvePlayerMiss(
+  state: DuelState,
+  firedAt: number,
+  shotScore: ShotScore,
+  extraStats: Partial<DuelStats> = {}
+): DuelState {
+  const drawAt = getDrawAt(state);
+  const playerReactionTimeMs = firedAt - drawAt;
+
+  return resolveDuel(state, firedAt, "loss", "missed shot", {
+    ...state.stats,
+    ...extraStats,
+    drawAt,
+    playerFiredAt: firedAt,
+    playerReactionTimeMs,
+    shotResult: shotScore.shotResult
+  });
+}
+
+export function resolveRuleViolation(
+  state: DuelState,
+  firedAt: number,
+  shotScore: ShotScore,
+  extraStats: Partial<DuelStats> = {}
+): DuelState {
+  const drawAt = getDrawAt(state);
+  const playerReactionTimeMs = firedAt - drawAt;
+
+  return resolveDuel(state, firedAt, "loss", "rule violation", {
+    ...state.stats,
+    ...extraStats,
+    drawAt,
+    playerFiredAt: firedAt,
+    playerReactionTimeMs,
+    shotResult: shotScore.shotResult
+  });
 }
 
 export function resolveEnemyShot(

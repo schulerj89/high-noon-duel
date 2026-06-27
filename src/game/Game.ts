@@ -23,14 +23,30 @@ import {
   saveTelemetry,
   type PlaytestTelemetry
 } from "../debug/telemetry";
+import {
+  BOUNTY_CONTRACTS,
+  getDefaultBountyContract,
+  getDuelModifier,
+  type BountyContractDefinition,
+  type DuelModifierDefinition
+} from "../data/duelModifiers";
 import { DEFAULT_ENEMY, ENEMIES, type EnemyDefinition } from "../data/enemies";
 import { getEnemyBehavior } from "../data/enemyBehaviors";
 import { UPGRADES, type UpgradeDefinition, type UpgradeId } from "../data/upgrades";
 import { getCameraPresentation } from "../scene/cameraPresentation";
+import {
+  applyEnvironmentVariant,
+  createDustStormParticles
+} from "../scene/applyEnvironmentVariant";
 import { createEnemy } from "../scene/createEnemy";
 import { updateEnemyMaterials } from "../scene/enemyMaterials";
 import { resetEnemyRigPose, type EnemyRig } from "../scene/enemyRig";
 import { GAME_CONFIG } from "./config";
+import {
+  deriveDuelRules,
+  isWinningShotAllowed,
+  type DuelRules
+} from "./duelRules";
 import {
   createEmptyBehaviorTimeline,
   createEnemyBehaviorTimeline,
@@ -75,6 +91,8 @@ import {
   resolveEarlyDraw,
   resolveEnemyShot,
   resolvePlayerHit,
+  resolvePlayerMiss,
+  resolveRuleViolation,
   startDuel
 } from "./state";
 import type { DrawAnimationStyle } from "./tells";
@@ -169,7 +187,13 @@ export class Game {
   private playerStats: PlayerStats = this.createPlayerStats();
   private state: DuelState = createIntroDuelState(performance.now());
   private timing: CountdownTiming = this.createRoundTiming();
-  private selectedEnemy: EnemyDefinition = getEnemyById(this.progression.selectedEnemyId);
+  private selectedContract: BountyContractDefinition = getDefaultBountyContract(
+    this.progression.selectedEnemyId
+  );
+  private selectedEnemy: EnemyDefinition = getEnemyById(this.selectedContract.enemyId);
+  private selectedModifier: DuelModifierDefinition = getDuelModifier(
+    this.selectedContract.modifierId
+  );
   private boardMode: BoardMode = "bounties";
   private resizeObserver: ResizeObserver | null = null;
   private animationFrameId: number | null = null;
@@ -202,6 +226,12 @@ export class Game {
   private enemyMuzzleFlash: THREE.Mesh | null = null;
   private missDustGroup: THREE.Group | null = null;
   private missDustMaterial: THREE.MeshBasicMaterial | null = null;
+  private hemisphereLight: THREE.HemisphereLight | null = null;
+  private sunLight: THREE.DirectionalLight | null = null;
+  private sunDisc: THREE.Mesh | null = null;
+  private groundMaterial: THREE.MeshStandardMaterial | null = null;
+  private streetMaterial: THREE.MeshStandardMaterial | null = null;
+  private dustStormGroup: THREE.Group | null = null;
 
   public constructor(root: HTMLElement) {
     this.root = root;
@@ -321,6 +351,7 @@ export class Game {
 
   private readonly startRound = (): void => {
     const now = performance.now();
+    this.applyCurrentEnvironment();
     this.timing = this.createRoundTiming();
     this.state = startDuel(now, this.timing);
     this.enemyReactionMs = this.getEffectiveEnemyTuning().reactionTimeMs;
@@ -357,7 +388,11 @@ export class Game {
 
     this.updateHitZoneScale();
     this.updateHitBoxVisibility();
-    this.telemetry = recordDuelStarted(this.telemetry, this.selectedEnemy);
+    this.telemetry = recordDuelStarted(
+      this.telemetry,
+      this.selectedEnemy,
+      this.selectedModifier.id
+    );
     saveTelemetry(this.telemetry);
     this.playDuelStartAudio();
     this.updateOverlay(now);
@@ -391,12 +426,15 @@ export class Game {
     this.updateOverlay(performance.now());
   };
 
-  private selectEnemy(enemy: EnemyDefinition): void {
-    this.selectedEnemy = enemy;
-    this.progression = rememberSelectedEnemy(this.progression, enemy.id);
+  private selectBountyContract(contract: BountyContractDefinition): void {
+    this.selectedContract = contract;
+    this.selectedEnemy = getEnemyById(contract.enemyId);
+    this.selectedModifier = getDuelModifier(contract.modifierId);
+    this.progression = rememberSelectedEnemy(this.progression, this.selectedEnemy.id);
     saveProgression(this.progression);
     this.rebuildEnemy();
     this.renderBountyBoard();
+    this.applyCurrentEnvironment();
     this.startRound();
   }
 
@@ -427,6 +465,21 @@ export class Game {
 
   private getEffectiveEnemyTuning(): EffectiveEnemyTuning {
     return getEnemyTuning(this.selectedEnemy, this.tuning);
+  }
+
+  private getDuelRules(): DuelRules {
+    return deriveDuelRules(this.selectedEnemy, this.selectedModifier, this.playerStats);
+  }
+
+  private getModifierStats(): Partial<DuelStats> {
+    const rules = this.getDuelRules();
+
+    return {
+      modifierId: rules.modifierId,
+      modifierName: rules.modifierName,
+      modifierRewardMultiplier: rules.rewardMultiplier,
+      modifierResultText: rules.modifierResultText
+    };
   }
 
   private createBehaviorTimeline(roundStartedAt: number, scheduledDrawAt: number): EnemyBehaviorTimeline {
@@ -807,6 +860,7 @@ export class Game {
     const hitZone = this.getHitZoneUnderReticle();
     const baseShotScore = scoreHitZone(hitZone);
     const timing = this.evaluatePlayerShotTiming(now);
+    const rules = this.getDuelRules();
 
     if (baseShotScore.shotResult === "miss") {
       this.lastMissAt = now;
@@ -818,6 +872,18 @@ export class Game {
         durationMs: 900,
         tone: "result"
       });
+
+      if (rules.missInstantLoss) {
+        this.state = resolvePlayerMiss(
+          this.state,
+          now,
+          baseShotScore,
+          this.getPlayerShotBehaviorStats(now, "miss")
+        );
+        this.updateOverlay();
+        return;
+      }
+
       this.state = recordPlayerMiss(
         this.state,
         now,
@@ -829,6 +895,26 @@ export class Game {
         this.enemyFireAt ?? getEnemyFireAt(this.state.stats.drawAt ?? now, this.enemyReactionMs),
         this.getMissPunishDelayMs()
       );
+      this.updateOverlay();
+      return;
+    }
+
+    if (!isWinningShotAllowed(baseShotScore.shotResult, rules)) {
+      this.state = resolveRuleViolation(
+        this.state,
+        now,
+        baseShotScore,
+        {
+          ...this.getPlayerShotBehaviorStats(now, "hit"),
+          behaviorResultText: rules.ruleViolationText ?? rules.modifierResultText
+        }
+      );
+      this.showSubtitle({
+        speaker: "Announcer",
+        line: rules.ruleViolationText ?? "Bounty terms broken.",
+        durationMs: 1300,
+        tone: "result"
+      });
       this.updateOverlay();
       return;
     }
@@ -932,6 +1018,7 @@ export class Game {
     const firedDuringFakeout = getActiveFakeoutEvent(this.behaviorTimeline, now) !== null;
 
     return {
+      ...this.getModifierStats(),
       firedDuringFakeout,
       behaviorResultText: firedDuringFakeout
         ? this.behaviorTimeline.behavior.resultText.fellForFakeout
@@ -945,6 +1032,7 @@ export class Game {
   ): Partial<DuelStats> {
     const waitedOutFakeout = hasFakeoutStartedBefore(this.behaviorTimeline, now);
     const aimDisrupted = hasAimDisruptionStartedBefore(this.behaviorTimeline, now);
+    const rules = this.getDuelRules();
     const behaviorText = this.getBehaviorResultText({
       waitedOutFakeout,
       aimDisrupted,
@@ -952,9 +1040,13 @@ export class Game {
     });
 
     return {
+      ...this.getModifierStats(),
       waitedOutFakeout,
       aimDisrupted,
-      behaviorResultText: behaviorText
+      behaviorResultText:
+        shotOutcome === "miss" && rules.missInstantLoss && rules.modifierResultText
+          ? rules.modifierResultText
+          : behaviorText
     };
   }
 
@@ -965,6 +1057,7 @@ export class Game {
       this.state.stats.aimDisrupted ?? hasAimDisruptionStartedBefore(this.behaviorTimeline, now);
 
     return {
+      ...this.getModifierStats(),
       waitedOutFakeout,
       aimDisrupted,
       behaviorResultText:
@@ -1022,7 +1115,7 @@ export class Game {
       return;
     }
 
-    const reward = this.state.result.outcome === "win" ? this.selectedEnemy.reward : 0;
+    const reward = this.state.result.outcome === "win" ? this.getDuelRules().reward : 0;
     this.progression = recordDuelResult(
       this.progression,
       this.state.result.outcome,
@@ -1079,12 +1172,15 @@ export class Game {
     this.progression = createDefaultProgression();
     saveProgression(this.progression);
     this.playerStats = this.createPlayerStats();
-    this.selectedEnemy = getEnemyById(this.progression.selectedEnemyId);
+    this.selectedContract = getDefaultBountyContract(this.progression.selectedEnemyId);
+    this.selectedEnemy = getEnemyById(this.selectedContract.enemyId);
+    this.selectedModifier = getDuelModifier(this.selectedContract.modifierId);
     this.boardMode = "bounties";
     this.lastMoneyEarned = 0;
     this.lastShopMessage = "Progress reset.";
     this.rebuildEnemy();
     this.renderBountyBoard();
+    this.applyCurrentEnvironment();
     this.updateOverlay();
   }
 
@@ -1416,8 +1512,19 @@ export class Game {
     this.updateFlash(this.muzzleFlash, this.lastPlayerShotAt, now);
     this.updateFlash(this.enemyMuzzleFlash, this.lastEnemyShotAt, now);
     this.updateMissDust(now);
+    this.updateEnvironmentEffects(now);
     this.updateHitZoneScale();
     this.updateHitBoxVisibility();
+  }
+
+  private updateEnvironmentEffects(now: number): void {
+    if (!this.dustStormGroup || !this.dustStormGroup.visible) {
+      return;
+    }
+
+    this.dustStormGroup.position.x = Math.sin(now * 0.0007) * 0.16;
+    this.dustStormGroup.position.z = Math.sin(now * 0.0005) * 0.08;
+    this.dustStormGroup.rotation.y = Math.sin(now * 0.00035) * 0.025;
   }
 
   private updateFakeoutDialogue(now: number): void {
@@ -1448,6 +1555,7 @@ export class Game {
 
   private updateCamera(now: number): void {
     const [baseX, baseY, baseZ] = GAME_CONFIG.camera.position;
+    const rules = this.getDuelRules();
     const lastShotAt = Math.max(this.lastPlayerShotAt ?? 0, this.lastEnemyShotAt ?? 0);
     const presentation = getCameraPresentation({
       phase: this.state.phase,
@@ -1462,14 +1570,14 @@ export class Game {
     this.camera.position.set(
       baseX + presentation.positionOffset[0],
       baseY + presentation.positionOffset[1],
-      baseZ + presentation.positionOffset[2]
+      baseZ + presentation.positionOffset[2] + rules.cameraDistanceOffsetZ
     );
-    this.camera.fov = GAME_CONFIG.camera.fov + presentation.fovOffset;
+    this.camera.fov = GAME_CONFIG.camera.fov + presentation.fovOffset + rules.cameraFovOffset;
     this.camera.updateProjectionMatrix();
     this.camera.lookAt(
       GAME_CONFIG.camera.lookAt[0] + presentation.lookAtOffset[0],
       GAME_CONFIG.camera.lookAt[1] + presentation.lookAtOffset[1],
-      GAME_CONFIG.camera.lookAt[2] + presentation.lookAtOffset[2]
+      GAME_CONFIG.camera.lookAt[2] + presentation.lookAtOffset[2] + rules.enemyDistanceOffsetZ * 0.18
     );
   }
 
@@ -1513,6 +1621,11 @@ export class Game {
     rig.root.position.y = THREE.MathUtils.lerp(
       rig.root.position.y,
       base.root.position[1] - rootSlump * 0.1,
+      ease
+    );
+    rig.root.position.z = THREE.MathUtils.lerp(
+      rig.root.position.z,
+      base.root.position[2] + this.getDuelRules().enemyDistanceOffsetZ,
       ease
     );
     rig.root.rotation.y = THREE.MathUtils.lerp(
@@ -1694,11 +1807,14 @@ export class Game {
     this.addEnemy();
     this.addGun();
     this.addMissDust();
+    this.addEnvironmentEffects();
+    this.applyCurrentEnvironment();
   }
 
   private addLighting(): void {
     const hemiLight = new THREE.HemisphereLight("#ffe7ba", "#70492c", 1.6);
     this.scene.add(hemiLight);
+    this.hemisphereLight = hemiLight;
 
     const sun = new THREE.DirectionalLight("#fff4d0", 3.2);
     sun.position.set(-5, 8, 4);
@@ -1711,6 +1827,7 @@ export class Game {
     sun.shadow.camera.top = 9;
     sun.shadow.camera.bottom = -9;
     this.scene.add(sun);
+    this.sunLight = sun;
 
     const sunDisc = new THREE.Mesh(
       new THREE.CircleGeometry(0.75, 32),
@@ -1719,12 +1836,18 @@ export class Game {
     sunDisc.position.set(-5.5, 5.6, -9);
     sunDisc.lookAt(this.camera.position);
     this.scene.add(sunDisc);
+    this.sunDisc = sunDisc;
   }
 
   private addGround(): void {
+    const groundMaterial = new THREE.MeshStandardMaterial({ color: "#c98542", roughness: 0.95 });
+    const streetMaterial = new THREE.MeshStandardMaterial({ color: "#8b5a37", roughness: 1 });
+    this.groundMaterial = groundMaterial;
+    this.streetMaterial = streetMaterial;
+
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(24, 26),
-      new THREE.MeshStandardMaterial({ color: "#c98542", roughness: 0.95 })
+      groundMaterial
     );
     ground.rotation.x = -Math.PI / 2;
     ground.position.z = -4;
@@ -1733,7 +1856,7 @@ export class Game {
 
     const street = new THREE.Mesh(
       new THREE.PlaneGeometry(4.8, 22),
-      new THREE.MeshStandardMaterial({ color: "#8b5a37", roughness: 1 })
+      streetMaterial
     );
     street.rotation.x = -Math.PI / 2;
     street.position.set(0, 0.012, -4.5);
@@ -1751,6 +1874,30 @@ export class Game {
     }
 
     this.scene.add(dustPuffs);
+  }
+
+  private addEnvironmentEffects(): void {
+    const dustStormGroup = createDustStormParticles();
+    this.scene.add(dustStormGroup);
+    this.dustStormGroup = dustStormGroup;
+  }
+
+  private applyCurrentEnvironment(): void {
+    const rules = this.getDuelRules();
+
+    applyEnvironmentVariant(rules.environmentVariant, {
+      scene: this.scene,
+      hemisphereLight: this.hemisphereLight,
+      sunLight: this.sunLight,
+      sunDisc: this.sunDisc,
+      groundMaterial: this.groundMaterial,
+      streetMaterial: this.streetMaterial,
+      dustStormGroup: this.dustStormGroup
+    });
+
+    this.viewport.dataset.environment = rules.environmentVariant;
+    this.viewport.dataset.modifier = rules.modifierId;
+    this.updateEnemyVisual();
   }
 
   private addTown(): void {
@@ -1945,10 +2092,20 @@ export class Game {
 
   private updateHitBoxVisibility(): void {
     const isEagleEyeActive = this.isEagleEyeHighlightActive();
+    const rules = this.getDuelRules();
+    const canShowHitZones =
+      !rules.hideHitZonesUnlessEagleEye ||
+      (rules.eagleEyeCanRevealHitZones && isEagleEyeActive);
 
     for (const mesh of this.hitZoneMeshes) {
       const material = mesh.material;
-      const opacity = this.hitBoxesVisible ? 0.68 : isEagleEyeActive ? 0.28 : 0;
+      const opacity = canShowHitZones
+        ? this.hitBoxesVisible
+          ? 0.68
+          : isEagleEyeActive
+            ? 0.28
+            : 0
+        : 0;
 
       if (Array.isArray(material)) {
         for (const item of material) {
@@ -1967,9 +2124,12 @@ export class Game {
       this.behaviorTimeline,
       performance.now()
     );
+    const rules = this.getDuelRules();
 
     for (const mesh of this.hitZoneMeshes) {
-      mesh.scale.setScalar(this.playerStats.hitZoneScale * behaviorScale);
+      mesh.scale.setScalar(
+        this.playerStats.hitZoneScale * behaviorScale * rules.hitZoneScaleMultiplier
+      );
     }
   }
 
@@ -2270,32 +2430,37 @@ export class Game {
     const list = document.createElement("div");
     list.className = "bounty-list";
 
-    for (const enemy of ENEMIES) {
-      list.append(this.createBountyPoster(enemy));
+    for (const contract of BOUNTY_CONTRACTS) {
+      list.append(this.createBountyPoster(contract));
     }
 
     this.ui.bountyBoard.append(heading, progressSummary, list);
   }
 
-  private createBountyPoster(enemy: EnemyDefinition): HTMLButtonElement {
+  private createBountyPoster(contract: BountyContractDefinition): HTMLButtonElement {
+    const enemy = getEnemyById(contract.enemyId);
+    const modifier = getDuelModifier(contract.modifierId);
+    const rules = deriveDuelRules(enemy, modifier, this.playerStats);
     const card = document.createElement("button");
     card.className = "bounty-card";
     card.type = "button";
     card.dataset.enemyId = enemy.id;
+    card.dataset.contractId = contract.id;
+    card.dataset.modifierId = modifier.id;
     card.style.setProperty("--poster-rotate", `${enemy.portrait.boardRotationDeg}deg`);
     card.style.setProperty("--poster-offset-y", `${enemy.portrait.boardOffsetY}px`);
     card.style.setProperty("--poster-paper", enemy.portrait.palette.paperTint);
     card.style.setProperty("--poster-ink", enemy.portrait.palette.ink);
     card.style.setProperty("--poster-shadow", enemy.portrait.palette.shadow);
     card.style.setProperty("--poster-accent", enemy.portrait.palette.accent);
-    card.classList.toggle("is-selected", enemy.id === this.selectedEnemy.id);
+    card.classList.toggle("is-selected", contract.id === this.selectedContract.id);
     card.setAttribute(
       "aria-label",
-      `Wanted poster for ${enemy.name}, ${enemy.title}, reward $${enemy.reward}`
+      `Wanted poster for ${enemy.name}, ${enemy.title}, ${modifier.name}, reward $${rules.reward}`
     );
     card.addEventListener("click", () => {
       this.audio.playSfx("posterPaper");
-      this.selectEnemy(enemy);
+      this.selectBountyContract(contract);
     });
 
     const pin = document.createElement("span");
@@ -2317,17 +2482,37 @@ export class Game {
 
     const meta = document.createElement("span");
     meta.className = "bounty-meta";
-    meta.textContent = `${enemy.difficultyHint} - reward $${enemy.reward}`;
+    meta.textContent = `${enemy.difficultyHint} - reward $${rules.reward}`;
+
+    const modifierEl = document.createElement("span");
+    modifierEl.className = "poster-modifier";
+    modifierEl.textContent =
+      `${modifier.name} - ${modifier.difficulty} - x${modifier.rewardMultiplier.toFixed(2)}`;
 
     const description = document.createElement("p");
     description.className = "poster-description";
     description.textContent = enemy.description;
 
+    const modifierDescription = document.createElement("p");
+    modifierDescription.className = "poster-modifier-description";
+    modifierDescription.textContent = modifier.description;
+
     const tell = document.createElement("small");
     tell.className = "poster-tell";
     tell.textContent = enemy.preferredTell;
 
-    card.append(pin, wanted, portrait, name, titleEl, meta, description, tell);
+    card.append(
+      pin,
+      wanted,
+      portrait,
+      name,
+      titleEl,
+      meta,
+      modifierEl,
+      description,
+      modifierDescription,
+      tell
+    );
     return card;
   }
 
@@ -2536,6 +2721,8 @@ export class Game {
     const isLoss = this.state.result?.outcome === "loss";
     const shotResult = this.state.result?.stats.shotResult;
     const resultText = this.getResultText();
+    const rules = this.getDuelRules();
+    const showReticle = this.state.phase === "draw" && rules.showReticle;
 
     this.ui.enemyName.textContent = this.getEnemyBadgeText();
     this.ui.bountyBoard.hidden = !isBoard;
@@ -2552,8 +2739,8 @@ export class Game {
     this.ui.result.classList.toggle("is-disarm", shotResult === "disarm");
     this.ui.actionButton.hidden = this.state.phase !== "resolved";
     this.ui.backButton.hidden = this.state.phase !== "resolved";
-    this.ui.crosshair.classList.toggle("is-visible", this.state.phase === "draw");
-    this.ui.crosshair.classList.toggle("is-hot", this.state.phase === "draw");
+    this.ui.crosshair.classList.toggle("is-visible", showReticle);
+    this.ui.crosshair.classList.toggle("is-hot", showReticle);
     this.viewport.classList.toggle("is-aiming", this.state.phase === "draw");
     this.viewport.classList.toggle("is-dueling", !isBoard);
     this.viewport.classList.toggle("is-hit-pause", now < this.hitPauseUntil);
@@ -2564,7 +2751,8 @@ export class Game {
   }
 
   private getEnemyBadgeText(): string {
-    return `${this.selectedEnemy.name} - $${this.selectedEnemy.reward}`;
+    const rules = this.getDuelRules();
+    return `${this.selectedEnemy.name} - ${rules.modifierName} - $${rules.reward}`;
   }
 
   private getPhaseText(): string {
@@ -2602,7 +2790,7 @@ export class Game {
     }
 
     if (this.state.phase === "draw") {
-      return "Aim and click.";
+      return this.getDuelRules().showReticle ? "Aim and click." : "Point shoot. No reticle.";
     }
 
     if (this.state.phase === "standoff") {
@@ -2625,6 +2813,10 @@ export class Game {
 
     if (!result) {
       return "";
+    }
+
+    if (result.reason === "rule violation") {
+      return "Bounty terms broken.";
     }
 
     if (result.stats.shotResult === "head") {
@@ -2663,6 +2855,10 @@ export class Game {
 
     if (this.state.result.stats.behaviorResultText) {
       return this.state.result.stats.behaviorResultText;
+    }
+
+    if (this.state.result.stats.modifierResultText) {
+      return this.state.result.stats.modifierResultText;
     }
 
     return `Reason: ${this.state.result.reason}.`;
@@ -2712,12 +2908,21 @@ export class Game {
     const stats = this.state.result.stats;
     const rows: Array<[string, string]> = [
       ["Duel Result", this.state.result.outcome.toUpperCase()],
+      ["Modifier", stats.modifierName ?? this.selectedModifier.name],
       ["Shot Result", formatShotResult(stats.shotResult)],
       ["Reaction Time", formatDuration(stats.playerReactionTimeMs)],
       ["Enemy Reaction", formatDuration(stats.enemyReactionTimeMs)],
       ["Money Earned", `$${this.lastMoneyEarned}`],
       ["Money", `$${this.progression.money}`]
     ];
+
+    if (stats.modifierRewardMultiplier !== undefined && stats.modifierRewardMultiplier !== 1) {
+      rows.push(["Reward Multiplier", `x${stats.modifierRewardMultiplier.toFixed(2)}`]);
+    }
+
+    if (stats.modifierResultText) {
+      rows.push(["Modifier Effect", stats.modifierResultText]);
+    }
 
     if (stats.styleBonusText) {
       rows.push(["Style Bonus", stats.styleBonusText]);
@@ -2756,6 +2961,7 @@ export class Game {
       if (
         label === "Style Bonus" ||
         label === "Behavior" ||
+        label === "Modifier Effect" ||
         label === "Upgrade Help" ||
         label === "Playtest"
       ) {

@@ -20,6 +20,8 @@ export interface EnemyTelemetry {
   fakeoutBites: number;
   fakeoutsWaitedOut: number;
   aimDisruptedShots: number;
+  modifierStarts: Record<string, number>;
+  modifierResults: Record<string, number>;
   reaction: ReactionStats;
   timeToShot: ReactionStats;
 }
@@ -36,6 +38,8 @@ export interface PlaytestTelemetry {
   fakeoutBites: number;
   fakeoutsWaitedOut: number;
   aimDisruptedShots: number;
+  modifierStarts: Record<string, number>;
+  modifierResults: Record<string, number>;
   reaction: ReactionStats;
   enemies: Record<string, EnemyTelemetry>;
   upgradeOwnershipAtDuel: Record<string, number>;
@@ -76,7 +80,8 @@ const LOSS_REASONS: readonly DuelResultReason[] = [
   "clean shot",
   "enemy was faster",
   "early draw",
-  "missed shot"
+  "missed shot",
+  "rule violation"
 ];
 
 export function createEmptyTelemetry(): PlaytestTelemetry {
@@ -92,6 +97,8 @@ export function createEmptyTelemetry(): PlaytestTelemetry {
     fakeoutBites: 0,
     fakeoutsWaitedOut: 0,
     aimDisruptedShots: 0,
+    modifierStarts: {},
+    modifierResults: {},
     reaction: createEmptyReactionStats(),
     enemies: {},
     upgradeOwnershipAtDuel: {}
@@ -124,18 +131,21 @@ export function saveTelemetry(telemetry: PlaytestTelemetry): void {
 
 export function recordDuelStarted(
   telemetry: PlaytestTelemetry,
-  enemy: EnemyDefinition
+  enemy: EnemyDefinition,
+  modifierId?: string
 ): PlaytestTelemetry {
   const enemyTelemetry = getEnemyTelemetry(telemetry, enemy);
 
   return {
     ...telemetry,
     totalDuelsStarted: telemetry.totalDuelsStarted + 1,
+    modifierStarts: incrementMapValue(telemetry.modifierStarts, modifierId),
     enemies: {
       ...telemetry.enemies,
       [enemy.id]: {
         ...enemyTelemetry,
-        duelsStarted: enemyTelemetry.duelsStarted + 1
+        duelsStarted: enemyTelemetry.duelsStarted + 1,
+        modifierStarts: incrementMapValue(enemyTelemetry.modifierStarts, modifierId)
       }
     }
   };
@@ -149,6 +159,7 @@ export function recordTelemetryDuelResult(
   const playerReactionTimeMs = result.stats.playerReactionTimeMs;
   const enemyTelemetry = getEnemyTelemetry(telemetry, enemy);
   const shotResult = result.stats.shotResult;
+  const modifierId = result.stats.modifierId;
   const nextEnemy = {
     ...enemyTelemetry,
     wins: enemyTelemetry.wins + (result.outcome === "win" ? 1 : 0),
@@ -163,6 +174,7 @@ export function recordTelemetryDuelResult(
       enemyTelemetry.fakeoutsWaitedOut + (result.stats.waitedOutFakeout ? 1 : 0),
     aimDisruptedShots:
       enemyTelemetry.aimDisruptedShots + (result.stats.aimDisrupted ? 1 : 0),
+    modifierResults: incrementMapValue(enemyTelemetry.modifierResults, modifierId),
     reaction:
       playerReactionTimeMs === undefined
         ? enemyTelemetry.reaction
@@ -189,6 +201,7 @@ export function recordTelemetryDuelResult(
       telemetry.fakeoutsWaitedOut + (result.stats.waitedOutFakeout ? 1 : 0),
     aimDisruptedShots:
       telemetry.aimDisruptedShots + (result.stats.aimDisrupted ? 1 : 0),
+    modifierResults: incrementMapValue(telemetry.modifierResults, modifierId),
     reaction:
       playerReactionTimeMs === undefined
         ? telemetry.reaction
@@ -266,6 +279,8 @@ function createEnemyTelemetry(enemy: EnemyDefinition): EnemyTelemetry {
     fakeoutBites: 0,
     fakeoutsWaitedOut: 0,
     aimDisruptedShots: 0,
+    modifierStarts: {},
+    modifierResults: {},
     reaction: createEmptyReactionStats(),
     timeToShot: createEmptyReactionStats()
   };
@@ -285,7 +300,8 @@ function createEmptyLossReasons(): Record<DuelResultReason, number> {
     "clean shot": 0,
     "enemy was faster": 0,
     "early draw": 0,
-    "missed shot": 0
+    "missed shot": 0,
+    "rule violation": 0
   };
 }
 
@@ -309,6 +325,20 @@ function recordOwnedUpgrades(
   }
 
   return next;
+}
+
+function incrementMapValue(
+  current: Record<string, number>,
+  key: string | undefined
+): Record<string, number> {
+  if (!key) {
+    return current;
+  }
+
+  return {
+    ...current,
+    [key]: (current[key] ?? 0) + 1
+  };
 }
 
 function getAverageMs(stats: ReactionStats): number | null {
@@ -339,6 +369,12 @@ function parseTelemetry(value: unknown): PlaytestTelemetry {
     fakeoutBites: readNonNegativeNumber(value.fakeoutBites),
     fakeoutsWaitedOut: readNonNegativeNumber(value.fakeoutsWaitedOut),
     aimDisruptedShots: readNonNegativeNumber(value.aimDisruptedShots),
+    modifierStarts: isRecord(value.modifierStarts)
+      ? parseNumberMap(value.modifierStarts)
+      : telemetry.modifierStarts,
+    modifierResults: isRecord(value.modifierResults)
+      ? parseNumberMap(value.modifierResults)
+      : telemetry.modifierResults,
     reaction: parseReactionStats(value.reaction),
     enemies: isRecord(value.enemies) ? parseEnemyTelemetryMap(value.enemies) : {},
     upgradeOwnershipAtDuel: isRecord(value.upgradeOwnershipAtDuel)
@@ -365,6 +401,12 @@ function parseEnemyTelemetryMap(value: Record<string, unknown>): Record<string, 
       fakeoutBites: readNonNegativeNumber(enemyValue.fakeoutBites),
       fakeoutsWaitedOut: readNonNegativeNumber(enemyValue.fakeoutsWaitedOut),
       aimDisruptedShots: readNonNegativeNumber(enemyValue.aimDisruptedShots),
+      modifierStarts: isRecord(enemyValue.modifierStarts)
+        ? parseNumberMap(enemyValue.modifierStarts)
+        : {},
+      modifierResults: isRecord(enemyValue.modifierResults)
+        ? parseNumberMap(enemyValue.modifierResults)
+        : {},
       reaction: parseReactionStats(enemyValue.reaction),
       timeToShot: parseReactionStats(enemyValue.timeToShot)
     };
