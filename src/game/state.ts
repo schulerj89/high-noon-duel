@@ -27,6 +27,10 @@ export interface DuelStats {
   enemyReactionTimeMs?: number;
   shotResult?: ShotResult;
   styleBonusText?: string;
+  firedDuringFakeout?: boolean;
+  waitedOutFakeout?: boolean;
+  aimDisrupted?: boolean;
+  behaviorResultText?: string;
 }
 
 export interface DuelResult {
@@ -116,9 +120,14 @@ export function advanceDuelState(
   };
 }
 
-export function resolveEarlyDraw(state: DuelState, now: number): DuelState {
+export function resolveEarlyDraw(
+  state: DuelState,
+  now: number,
+  extraStats: Partial<DuelStats> = {}
+): DuelState {
   return resolveDuel(state, now, "loss", "early draw", {
     ...state.stats,
+    ...extraStats,
     playerFiredAt: now
   });
 }
@@ -127,13 +136,15 @@ export function resolvePlayerHit(
   state: DuelState,
   firedAt: number,
   shotScore: ShotScore,
-  enemyReactionTimeMs: number
+  enemyReactionTimeMs: number,
+  extraStats: Partial<DuelStats> = {}
 ): DuelState {
   const drawAt = getDrawAt(state);
   const playerReactionTimeMs = firedAt - drawAt;
 
   return resolveDuel(state, firedAt, "win", "clean shot", {
     ...state.stats,
+    ...extraStats,
     drawAt,
     playerFiredAt: firedAt,
     playerReactionTimeMs,
@@ -146,7 +157,8 @@ export function resolvePlayerHit(
 export function recordPlayerMiss(
   state: DuelState,
   firedAt: number,
-  shotScore: ShotScore
+  shotScore: ShotScore,
+  extraStats: Partial<DuelStats> = {}
 ): DuelState {
   const drawAt = getDrawAt(state);
   const playerReactionTimeMs = firedAt - drawAt;
@@ -157,6 +169,7 @@ export function recordPlayerMiss(
     phaseStartedAt: firedAt,
     stats: {
       ...state.stats,
+      ...extraStats,
       drawAt,
       playerFiredAt: firedAt,
       playerReactionTimeMs,
@@ -168,13 +181,15 @@ export function recordPlayerMiss(
 export function resolveEnemyShot(
   state: DuelState,
   firedAt: number,
-  reason: Extract<DuelResultReason, "enemy was faster" | "missed shot">
+  reason: Extract<DuelResultReason, "enemy was faster" | "missed shot">,
+  extraStats: Partial<DuelStats> = {}
 ): DuelState {
   const drawAt = getDrawAt(state);
   const enemyReactionTimeMs = firedAt - drawAt;
 
   return resolveDuel(state, firedAt, "loss", reason, {
     ...state.stats,
+    ...extraStats,
     drawAt,
     enemyFiredAt: firedAt,
     enemyReactionTimeMs

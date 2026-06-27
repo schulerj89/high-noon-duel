@@ -24,12 +24,23 @@ import {
   type PlaytestTelemetry
 } from "../debug/telemetry";
 import { DEFAULT_ENEMY, ENEMIES, type EnemyDefinition } from "../data/enemies";
+import { getEnemyBehavior } from "../data/enemyBehaviors";
 import { UPGRADES, type UpgradeDefinition, type UpgradeId } from "../data/upgrades";
 import { getCameraPresentation } from "../scene/cameraPresentation";
 import { createEnemy } from "../scene/createEnemy";
 import { updateEnemyMaterials } from "../scene/enemyMaterials";
 import { resetEnemyRigPose, type EnemyRig } from "../scene/enemyRig";
 import { GAME_CONFIG } from "./config";
+import {
+  createEmptyBehaviorTimeline,
+  createEnemyBehaviorTimeline,
+  getActiveFakeoutEvent,
+  getBehaviorHitZoneScaleMultiplier,
+  getBehaviorInfluence,
+  hasAimDisruptionStartedBefore,
+  hasFakeoutStartedBefore,
+  type EnemyBehaviorTimeline
+} from "./enemyBehavior";
 import {
   clearSavedProgression,
   createDefaultProgression,
@@ -57,6 +68,7 @@ import {
   createIntroDuelState,
   type CountdownTiming,
   type DuelPhase,
+  type DuelStats,
   type DuelState,
   formatDuration,
   recordPlayerMiss,
@@ -65,6 +77,7 @@ import {
   resolvePlayerHit,
   startDuel
 } from "./state";
+import type { DrawAnimationStyle } from "./tells";
 
 interface UiElements {
   overlay: HTMLDivElement;
@@ -103,12 +116,6 @@ interface VolumeControlElements {
 type Vec3Tuple = [number, number, number];
 type BoardMode = "bounties" | "shop";
 type DuelLossReason = "enemy was faster" | "missed shot";
-
-interface FakeoutWindow {
-  startsAt: number;
-  endsAt: number;
-  intensity: number;
-}
 
 interface PlayerShotTiming {
   beatsEnemy: boolean;
@@ -169,8 +176,11 @@ export class Game {
   private enemyReactionMs: number = DEFAULT_ENEMY.reactionTimeMs;
   private enemyFireAt: number | null = null;
   private missLossAt: number | null = null;
-  private fakeouts: FakeoutWindow[] = [];
-  private spokenFakeoutStartsAt = new Set<number>();
+  private behaviorTimeline: EnemyBehaviorTimeline = createEmptyBehaviorTimeline(
+    getEnemyBehavior(this.selectedEnemy.id),
+    performance.now()
+  );
+  private spokenBehaviorEventIds = new Set<string>();
   private enemyHasFired = false;
   private duelSettled = false;
   private hitBoxesVisible = false;
@@ -316,8 +326,8 @@ export class Game {
     this.enemyReactionMs = this.getEffectiveEnemyTuning().reactionTimeMs;
     this.enemyFireAt = null;
     this.missLossAt = null;
-    this.fakeouts = this.createFakeoutWindows(now, this.state.scheduledDrawAt);
-    this.spokenFakeoutStartsAt.clear();
+    this.behaviorTimeline = this.createBehaviorTimeline(now, this.state.scheduledDrawAt);
+    this.spokenBehaviorEventIds.clear();
     this.enemyHasFired = false;
     this.duelSettled = false;
     this.lastMoneyEarned = 0;
@@ -358,8 +368,8 @@ export class Game {
     this.state = createIntroDuelState(performance.now());
     this.enemyFireAt = null;
     this.missLossAt = null;
-    this.fakeouts = [];
-    this.spokenFakeoutStartsAt.clear();
+    this.behaviorTimeline = createEmptyBehaviorTimeline(getEnemyBehavior(this.selectedEnemy.id), performance.now());
+    this.spokenBehaviorEventIds.clear();
     this.enemyHasFired = false;
     this.lastPlayerShotAt = null;
     this.lastEnemyShotAt = null;
@@ -419,32 +429,14 @@ export class Game {
     return getEnemyTuning(this.selectedEnemy, this.tuning);
   }
 
-  private createFakeoutWindows(roundStartedAt: number, scheduledDrawAt: number): FakeoutWindow[] {
-    const fakeoutChance = this.getEffectiveEnemyTuning().fakeoutChance;
-
-    if (fakeoutChance <= 0 || Math.random() > fakeoutChance) {
-      return [];
-    }
-
-    const availableMs = scheduledDrawAt - roundStartedAt - 450;
-
-    if (availableMs <= 500) {
-      return [];
-    }
-
-    const count = fakeoutChance > 0.55 ? 2 : 1;
-    const windows: FakeoutWindow[] = [];
-
-    for (let i = 0; i < count; i += 1) {
-      const startsAt = roundStartedAt + randomRange(450, availableMs);
-      windows.push({
-        startsAt,
-        endsAt: startsAt + randomRange(180, 270),
-        intensity: randomRange(0.65, 1)
-      });
-    }
-
-    return windows.sort((a, b) => a.startsAt - b.startsAt);
+  private createBehaviorTimeline(roundStartedAt: number, scheduledDrawAt: number): EnemyBehaviorTimeline {
+    return createEnemyBehaviorTimeline({
+      behavior: getEnemyBehavior(this.selectedEnemy.id),
+      roundStartedAt,
+      fakeoutStartsAt: roundStartedAt + this.timing.standoffDurationMs,
+      scheduledDrawAt,
+      fakeoutChance: this.getEffectiveEnemyTuning().fakeoutChance
+    });
   }
 
   private bindEvents(): void {
@@ -554,8 +546,8 @@ export class Game {
       this.enemyFireAt = getEnemyFireAt(now, this.enemyReactionMs);
     }
 
-    this.fakeouts = [];
-    this.spokenFakeoutStartsAt.clear();
+    this.behaviorTimeline = this.createBehaviorTimeline(this.state.roundStartedAt, this.state.scheduledDrawAt);
+    this.spokenBehaviorEventIds.clear();
     this.updateOverlay(now);
   }
 
@@ -573,7 +565,8 @@ export class Game {
       drawState,
       now,
       { shotResult: "torso" },
-      this.enemyReactionMs
+      this.enemyReactionMs,
+      this.getPlayerShotBehaviorStats(now, "hit")
     );
     this.updateOverlay(now);
   }
@@ -590,7 +583,12 @@ export class Game {
       this.enemyMuzzleFlash.visible = true;
     }
 
-    this.state = resolveEnemyShot(drawState, now, "enemy was faster");
+    this.state = resolveEnemyShot(
+      drawState,
+      now,
+      "enemy was faster",
+      this.getEnemyWinBehaviorStats(now)
+    );
     this.updateOverlay(now);
   }
 
@@ -598,6 +596,8 @@ export class Game {
     const drawAt = this.state.stats.drawAt ?? now;
     this.enemyReactionMs = this.getEffectiveEnemyTuning().reactionTimeMs;
     this.enemyFireAt = getEnemyFireAt(drawAt, this.enemyReactionMs);
+    this.behaviorTimeline = this.createBehaviorTimeline(this.state.roundStartedAt, drawAt);
+    this.spokenBehaviorEventIds.clear();
 
     return {
       ...this.state,
@@ -795,7 +795,7 @@ export class Game {
       this.lastPlayerShotAt = now;
       this.showPlayerMuzzleFlash();
       this.audio.playSfx("gunshotPlayer");
-      this.state = resolveEarlyDraw(this.state, now);
+      this.state = resolveEarlyDraw(this.state, now, this.getEarlyDrawBehaviorStats(now));
       this.updateOverlay();
       return;
     }
@@ -818,7 +818,12 @@ export class Game {
         durationMs: 900,
         tone: "result"
       });
-      this.state = recordPlayerMiss(this.state, now, baseShotScore);
+      this.state = recordPlayerMiss(
+        this.state,
+        now,
+        baseShotScore,
+        this.getPlayerShotBehaviorStats(now, "miss")
+      );
       this.missLossAt = getMissPunishFireAt(
         now,
         this.enemyFireAt ?? getEnemyFireAt(this.state.stats.drawAt ?? now, this.enemyReactionMs),
@@ -829,7 +834,7 @@ export class Game {
     }
 
     if (!timing.beatsEnemy) {
-      this.resolveEnemyFire("enemy was faster", timing.enemyFiredAt);
+      this.resolveEnemyFire("enemy was faster", timing.enemyFiredAt, this.getEnemyWinBehaviorStats(now));
       this.updateOverlay();
       return;
     }
@@ -848,7 +853,13 @@ export class Game {
     this.audio.playSfx("bodyHit");
     this.hitPauseStartedAt = now;
     this.hitPauseUntil = now + GAME_CONFIG.timing.hitPauseMs;
-    this.state = resolvePlayerHit(this.state, now, shotScore, this.enemyReactionMs);
+    this.state = resolvePlayerHit(
+      this.state,
+      now,
+      shotScore,
+      this.enemyReactionMs,
+      this.getPlayerShotBehaviorStats(now, "hit")
+    );
 
     this.updateOverlay();
   }
@@ -866,12 +877,12 @@ export class Game {
       enemyResolveAt !== null &&
       now >= enemyResolveAt
     ) {
-      this.resolveEnemyFire("enemy was faster", this.enemyFireAt);
+      this.resolveEnemyFire("enemy was faster", this.enemyFireAt, this.getEnemyWinBehaviorStats(now));
       return;
     }
 
     if (this.state.phase === "missed" && this.missLossAt !== null && now >= this.missLossAt) {
-      this.resolveEnemyFire("missed shot", this.missLossAt);
+      this.resolveEnemyFire("missed shot", this.missLossAt, this.getEnemyWinBehaviorStats(now));
     }
   }
 
@@ -917,7 +928,76 @@ export class Game {
     return GAME_CONFIG.timing.missPunishDelayMs + (1 - this.getEffectiveEnemyTuning().accuracy) * 360;
   }
 
-  private resolveEnemyFire(reason: DuelLossReason, firedAt: number): void {
+  private getEarlyDrawBehaviorStats(now: number): Partial<DuelStats> {
+    const firedDuringFakeout = getActiveFakeoutEvent(this.behaviorTimeline, now) !== null;
+
+    return {
+      firedDuringFakeout,
+      behaviorResultText: firedDuringFakeout
+        ? this.behaviorTimeline.behavior.resultText.fellForFakeout
+        : undefined
+    };
+  }
+
+  private getPlayerShotBehaviorStats(
+    now: number,
+    shotOutcome: "hit" | "miss"
+  ): Partial<DuelStats> {
+    const waitedOutFakeout = hasFakeoutStartedBefore(this.behaviorTimeline, now);
+    const aimDisrupted = hasAimDisruptionStartedBefore(this.behaviorTimeline, now);
+    const behaviorText = this.getBehaviorResultText({
+      waitedOutFakeout,
+      aimDisrupted,
+      shotOutcome
+    });
+
+    return {
+      waitedOutFakeout,
+      aimDisrupted,
+      behaviorResultText: behaviorText
+    };
+  }
+
+  private getEnemyWinBehaviorStats(now: number): Partial<DuelStats> {
+    const waitedOutFakeout =
+      this.state.stats.waitedOutFakeout ?? hasFakeoutStartedBefore(this.behaviorTimeline, now);
+    const aimDisrupted =
+      this.state.stats.aimDisrupted ?? hasAimDisruptionStartedBefore(this.behaviorTimeline, now);
+
+    return {
+      waitedOutFakeout,
+      aimDisrupted,
+      behaviorResultText:
+        this.state.stats.behaviorResultText ??
+        (aimDisrupted
+          ? this.behaviorTimeline.behavior.resultText.aimDisrupted
+          : this.behaviorTimeline.behavior.resultText.cleanDraw)
+    };
+  }
+
+  private getBehaviorResultText(input: {
+    waitedOutFakeout: boolean;
+    aimDisrupted: boolean;
+    shotOutcome: "hit" | "miss";
+  }): string {
+    const resultText = this.behaviorTimeline.behavior.resultText;
+
+    if (input.shotOutcome === "miss" && input.aimDisrupted) {
+      return resultText.aimDisrupted;
+    }
+
+    if (input.waitedOutFakeout) {
+      return resultText.waitedOutFakeout;
+    }
+
+    return resultText.cleanDraw;
+  }
+
+  private resolveEnemyFire(
+    reason: DuelLossReason,
+    firedAt: number,
+    extraStats: Partial<DuelStats> = {}
+  ): void {
     if (this.enemyHasFired) {
       return;
     }
@@ -934,7 +1014,7 @@ export class Game {
       this.enemyMuzzleFlash.visible = true;
     }
 
-    this.state = resolveEnemyShot(this.state, firedAt, reason);
+    this.state = resolveEnemyShot(this.state, firedAt, reason, extraStats);
   }
 
   private settleDuelResultIfNeeded(): void {
@@ -1336,6 +1416,7 @@ export class Game {
     this.updateFlash(this.muzzleFlash, this.lastPlayerShotAt, now);
     this.updateFlash(this.enemyMuzzleFlash, this.lastEnemyShotAt, now);
     this.updateMissDust(now);
+    this.updateHitZoneScale();
     this.updateHitBoxVisibility();
   }
 
@@ -1344,17 +1425,25 @@ export class Game {
       return;
     }
 
-    for (const fakeout of this.fakeouts) {
-      if (
-        now >= fakeout.startsAt &&
-        now <= fakeout.endsAt &&
-        !this.spokenFakeoutStartsAt.has(fakeout.startsAt)
-      ) {
-        this.spokenFakeoutStartsAt.add(fakeout.startsAt);
-        this.playEnemyDialogue("fakeout", { durationMs: 1200 });
-        return;
-      }
+    const fakeout = getActiveFakeoutEvent(this.behaviorTimeline, now);
+
+    if (!fakeout || this.spokenBehaviorEventIds.has(fakeout.id)) {
+      return;
     }
+
+    this.spokenBehaviorEventIds.add(fakeout.id);
+
+    if (fakeout.subtitleLine) {
+      this.showSubtitle({
+        speaker: this.selectedEnemy.name,
+        line: fakeout.subtitleLine,
+        durationMs: 1100,
+        tone: "enemy"
+      });
+      return;
+    }
+
+    this.playEnemyDialogue("fakeout", { durationMs: 1200 });
   }
 
   private updateCamera(now: number): void {
@@ -1392,7 +1481,6 @@ export class Game {
     const rig = this.enemyRig;
     const ease = 1 - Math.exp(-delta * 12);
     const now = performance.now();
-    const fakeoutIntensity = this.getFakeoutIntensity(now);
     const motion = this.selectedEnemy.visual.motion;
     const base = rig.basePose;
     const isEnemyDrawing = this.state.phase === "draw" || this.state.phase === "missed";
@@ -1406,8 +1494,15 @@ export class Game {
       : 0;
     const idlePhase = now * 0.004;
     const idleEnabled = this.state.phase !== "resolved" || playerWon;
-    const idleSway = idleEnabled ? Math.sin(idlePhase) * motion.idleSway : 0;
-    const targetLean = isEnemyDrawing ? this.selectedEnemy.visual.drawLeanDistance : 0;
+    const behaviorInfluence = getBehaviorInfluence(this.behaviorTimeline, now, idleEnabled);
+    const tell = behaviorInfluence.intensities;
+    const stillness = THREE.MathUtils.clamp(Math.abs(tell.stillness), 0, 1);
+    const idleSway = idleEnabled ? Math.sin(idlePhase) * motion.idleSway * (1 - stillness * 0.9) : 0;
+    const idleLeanOffset = (tell.leanRight - tell.leanLeft) * 0.08;
+    const targetLean =
+      (isEnemyDrawing ? this.selectedEnemy.visual.drawLeanDistance : 0) +
+      behaviorInfluence.leanOffset +
+      idleLeanOffset;
     const rootSlump = playerWon ? motion.hitSlump : 0;
 
     rig.root.position.x = THREE.MathUtils.lerp(
@@ -1420,10 +1515,14 @@ export class Game {
       base.root.position[1] - rootSlump * 0.1,
       ease
     );
-    rig.root.rotation.y = THREE.MathUtils.lerp(rig.root.rotation.y, base.root.rotation[1], ease);
+    rig.root.rotation.y = THREE.MathUtils.lerp(
+      rig.root.rotation.y,
+      base.root.rotation[1] + tell.coatShift * 0.08,
+      ease
+    );
     rig.root.rotation.z = THREE.MathUtils.lerp(
       rig.root.rotation.z,
-      base.root.rotation[2] - rootSlump,
+      base.root.rotation[2] - rootSlump + (tell.leanLeft - tell.leanRight) * 0.06,
       ease
     );
 
@@ -1437,9 +1536,15 @@ export class Game {
       base.head.rotation[0] - (playerWon ? 0.18 : 0),
       ease
     );
+    rig.head.rotation.y = THREE.MathUtils.lerp(
+      rig.head.rotation.y,
+      base.head.rotation[1] + tell.eyeGlance * 0.24,
+      ease
+    );
     rig.shoulders.rotation.z = THREE.MathUtils.lerp(
       rig.shoulders.rotation.z,
-      base.shoulders.rotation[2] - fakeoutIntensity * motion.shoulderTwitch,
+      base.shoulders.rotation[2] -
+        (behaviorInfluence.fakeoutIntensity + Math.abs(tell.shoulderDrop)) * motion.shoulderTwitch,
       ease
     );
 
@@ -1449,19 +1554,50 @@ export class Game {
     let handTargetZ = base.rightHand.position[2];
     let handTwistTarget = base.rightHand.rotation[2];
     let gunKickTarget = base.gun.rotation[0];
+    const handTell = tell.handTwitch;
+    const holsterTap = Math.max(0, tell.holsterTap);
+    const fakeoutIntensity = behaviorInfluence.fakeoutIntensity;
+    const realDrawTellIntensity = behaviorInfluence.realDrawTellIntensity;
 
-    if (fakeoutIntensity > 0) {
-      const twitch = Math.sin(now * 0.08) * motion.handTwitch * fakeoutIntensity;
-      upperArmTarget -= motion.shoulderTwitch * fakeoutIntensity;
-      forearmTarget -= 0.35 * fakeoutIntensity + motion.handTwitch;
-      handTargetX += twitch;
+    if (
+      fakeoutIntensity > 0 ||
+      realDrawTellIntensity > 0 ||
+      Math.abs(handTell) > 0.01 ||
+      holsterTap > 0.01
+    ) {
+      const twitch =
+        Math.sin(now * 0.08) *
+        motion.handTwitch *
+        (fakeoutIntensity + realDrawTellIntensity + Math.abs(handTell));
+      upperArmTarget -= motion.shoulderTwitch * (fakeoutIntensity + realDrawTellIntensity * 0.55);
+      forearmTarget -=
+        0.35 * fakeoutIntensity +
+        0.22 * realDrawTellIntensity +
+        0.18 * holsterTap +
+        motion.handTwitch;
+      handTargetX += twitch + handTell * 0.05;
       handTargetZ += 0.05 * fakeoutIntensity;
+      handTargetZ += 0.07 * holsterTap + 0.04 * realDrawTellIntensity;
+      handTwistTarget += 0.18 * realDrawTellIntensity;
     }
 
     if (isEnemyDrawing) {
-      upperArmTarget = THREE.MathUtils.lerp(base.rightUpperArm.rotation[2], -0.55, drawProgress);
-      forearmTarget = THREE.MathUtils.lerp(base.rightForearm.rotation[2], -1.18, drawProgress);
-      handTargetZ += 0.12 * drawProgress;
+      const drawTarget = getDrawPoseTarget(
+        this.behaviorTimeline.behavior.drawAnimation.style,
+        this.behaviorTimeline.behavior.drawAnimation.commitment
+      );
+      upperArmTarget = THREE.MathUtils.lerp(
+        base.rightUpperArm.rotation[2],
+        drawTarget.upperArmZ,
+        drawProgress
+      );
+      forearmTarget = THREE.MathUtils.lerp(
+        base.rightForearm.rotation[2],
+        drawTarget.forearmZ,
+        drawProgress
+      );
+      handTargetX += drawTarget.handOffsetX * drawProgress;
+      handTargetZ += drawTarget.handForward * drawProgress;
     }
 
     if (this.enemyHasFired || playerLost) {
@@ -1487,21 +1623,6 @@ export class Game {
     rig.rightHand.position.z = THREE.MathUtils.lerp(rig.rightHand.position.z, handTargetZ, ease);
     rig.rightHand.rotation.z = THREE.MathUtils.lerp(rig.rightHand.rotation.z, handTwistTarget, ease);
     rig.gun.rotation.x = THREE.MathUtils.lerp(rig.gun.rotation.x, gunKickTarget, ease);
-  }
-
-  private getFakeoutIntensity(now: number): number {
-    if (this.state.phase === "draw" || this.state.phase === "missed" || this.state.phase === "resolved") {
-      return 0;
-    }
-
-    for (const fakeout of this.fakeouts) {
-      if (now >= fakeout.startsAt && now <= fakeout.endsAt) {
-        const progress = (now - fakeout.startsAt) / (fakeout.endsAt - fakeout.startsAt);
-        return Math.sin(progress * Math.PI) * fakeout.intensity;
-      }
-    }
-
-    return 0;
   }
 
   private updateGunPose(now: number): void {
@@ -1842,8 +1963,13 @@ export class Game {
   }
 
   private updateHitZoneScale(): void {
+    const behaviorScale = getBehaviorHitZoneScaleMultiplier(
+      this.behaviorTimeline,
+      performance.now()
+    );
+
     for (const mesh of this.hitZoneMeshes) {
-      mesh.scale.setScalar(this.playerStats.hitZoneScale);
+      mesh.scale.setScalar(this.playerStats.hitZoneScale * behaviorScale);
     }
   }
 
@@ -2535,6 +2661,10 @@ export class Game {
       return styleBonus;
     }
 
+    if (this.state.result.stats.behaviorResultText) {
+      return this.state.result.stats.behaviorResultText;
+    }
+
     return `Reason: ${this.state.result.reason}.`;
   }
 
@@ -2593,6 +2723,16 @@ export class Game {
       rows.push(["Style Bonus", stats.styleBonusText]);
     }
 
+    if (stats.behaviorResultText) {
+      rows.push(["Behavior", stats.behaviorResultText]);
+    }
+
+    if (stats.firedDuringFakeout) {
+      rows.push(["Fakeout", "Fired during fakeout"]);
+    } else if (stats.waitedOutFakeout) {
+      rows.push(["Fakeout", "Waited it out"]);
+    }
+
     const upgradeHelp = this.getUpgradeHelpText();
 
     if (upgradeHelp) {
@@ -2613,7 +2753,12 @@ export class Game {
       const row = document.createElement("div");
       row.className = "stat-row";
 
-      if (label === "Style Bonus" || label === "Upgrade Help" || label === "Playtest") {
+      if (
+        label === "Style Bonus" ||
+        label === "Behavior" ||
+        label === "Upgrade Help" ||
+        label === "Playtest"
+      ) {
         row.classList.add("is-wide");
       }
 
@@ -2635,6 +2780,63 @@ export class Game {
 
 function randomRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
+}
+
+function getDrawPoseTarget(
+  style: DrawAnimationStyle,
+  commitment: number
+): {
+  upperArmZ: number;
+  forearmZ: number;
+  handForward: number;
+  handOffsetX: number;
+} {
+  const clampedCommitment = THREE.MathUtils.clamp(commitment, 0.65, 1.25);
+  const targets: Record<DrawAnimationStyle, {
+    upperArmZ: number;
+    forearmZ: number;
+    handForward: number;
+    handOffsetX: number;
+  }> = {
+    obviousReach: {
+      upperArmZ: -0.72,
+      forearmZ: -1.32,
+      handForward: 0.18,
+      handOffsetX: -0.03
+    },
+    baitedReach: {
+      upperArmZ: -0.62,
+      forearmZ: -1.2,
+      handForward: 0.14,
+      handOffsetX: 0.04
+    },
+    cleanDraw: {
+      upperArmZ: -0.55,
+      forearmZ: -1.18,
+      handForward: 0.12,
+      handOffsetX: 0
+    },
+    sideStepDraw: {
+      upperArmZ: -0.64,
+      forearmZ: -1.24,
+      handForward: 0.15,
+      handOffsetX: -0.02
+    },
+    snapDraw: {
+      upperArmZ: -0.48,
+      forearmZ: -1.34,
+      handForward: 0.1,
+      handOffsetX: 0.03
+    }
+  };
+  const target = targets[style];
+
+  return {
+    upperArmZ: target.upperArmZ * clampedCommitment,
+    forearmZ: target.forearmZ * clampedCommitment,
+    handForward: target.handForward * clampedCommitment,
+    handOffsetX: target.handOffsetX * clampedCommitment
+  };
 }
 
 function getEnemyById(enemyId: string): EnemyDefinition {

@@ -17,6 +17,9 @@ export interface EnemyTelemetry {
   wins: number;
   losses: number;
   lossReasons: Record<DuelResultReason, number>;
+  fakeoutBites: number;
+  fakeoutsWaitedOut: number;
+  aimDisruptedShots: number;
   reaction: ReactionStats;
   timeToShot: ReactionStats;
 }
@@ -30,6 +33,9 @@ export interface PlaytestTelemetry {
   headHits: number;
   torsoHits: number;
   disarms: number;
+  fakeoutBites: number;
+  fakeoutsWaitedOut: number;
+  aimDisruptedShots: number;
   reaction: ReactionStats;
   enemies: Record<string, EnemyTelemetry>;
   upgradeOwnershipAtDuel: Record<string, number>;
@@ -83,6 +89,9 @@ export function createEmptyTelemetry(): PlaytestTelemetry {
     headHits: 0,
     torsoHits: 0,
     disarms: 0,
+    fakeoutBites: 0,
+    fakeoutsWaitedOut: 0,
+    aimDisruptedShots: 0,
     reaction: createEmptyReactionStats(),
     enemies: {},
     upgradeOwnershipAtDuel: {}
@@ -148,6 +157,12 @@ export function recordTelemetryDuelResult(
       ...enemyTelemetry.lossReasons,
       [result.reason]: enemyTelemetry.lossReasons[result.reason] + (result.outcome === "loss" ? 1 : 0)
     },
+    fakeoutBites:
+      enemyTelemetry.fakeoutBites + (result.stats.firedDuringFakeout ? 1 : 0),
+    fakeoutsWaitedOut:
+      enemyTelemetry.fakeoutsWaitedOut + (result.stats.waitedOutFakeout ? 1 : 0),
+    aimDisruptedShots:
+      enemyTelemetry.aimDisruptedShots + (result.stats.aimDisrupted ? 1 : 0),
     reaction:
       playerReactionTimeMs === undefined
         ? enemyTelemetry.reaction
@@ -169,6 +184,11 @@ export function recordTelemetryDuelResult(
     headHits: telemetry.headHits + (shotResult === "head" ? 1 : 0),
     torsoHits: telemetry.torsoHits + (shotResult === "torso" ? 1 : 0),
     disarms: telemetry.disarms + (shotResult === "disarm" ? 1 : 0),
+    fakeoutBites: telemetry.fakeoutBites + (result.stats.firedDuringFakeout ? 1 : 0),
+    fakeoutsWaitedOut:
+      telemetry.fakeoutsWaitedOut + (result.stats.waitedOutFakeout ? 1 : 0),
+    aimDisruptedShots:
+      telemetry.aimDisruptedShots + (result.stats.aimDisrupted ? 1 : 0),
     reaction:
       playerReactionTimeMs === undefined
         ? telemetry.reaction
@@ -243,6 +263,9 @@ function createEnemyTelemetry(enemy: EnemyDefinition): EnemyTelemetry {
     wins: 0,
     losses: 0,
     lossReasons: createEmptyLossReasons(),
+    fakeoutBites: 0,
+    fakeoutsWaitedOut: 0,
+    aimDisruptedShots: 0,
     reaction: createEmptyReactionStats(),
     timeToShot: createEmptyReactionStats()
   };
@@ -313,6 +336,9 @@ function parseTelemetry(value: unknown): PlaytestTelemetry {
     headHits: readNonNegativeNumber(value.headHits),
     torsoHits: readNonNegativeNumber(value.torsoHits),
     disarms: readNonNegativeNumber(value.disarms),
+    fakeoutBites: readNonNegativeNumber(value.fakeoutBites),
+    fakeoutsWaitedOut: readNonNegativeNumber(value.fakeoutsWaitedOut),
+    aimDisruptedShots: readNonNegativeNumber(value.aimDisruptedShots),
     reaction: parseReactionStats(value.reaction),
     enemies: isRecord(value.enemies) ? parseEnemyTelemetryMap(value.enemies) : {},
     upgradeOwnershipAtDuel: isRecord(value.upgradeOwnershipAtDuel)
@@ -336,6 +362,9 @@ function parseEnemyTelemetryMap(value: Record<string, unknown>): Record<string, 
       wins: readNonNegativeNumber(enemyValue.wins),
       losses: readNonNegativeNumber(enemyValue.losses),
       lossReasons: parseLossReasons(enemyValue.lossReasons),
+      fakeoutBites: readNonNegativeNumber(enemyValue.fakeoutBites),
+      fakeoutsWaitedOut: readNonNegativeNumber(enemyValue.fakeoutsWaitedOut),
+      aimDisruptedShots: readNonNegativeNumber(enemyValue.aimDisruptedShots),
       reaction: parseReactionStats(enemyValue.reaction),
       timeToShot: parseReactionStats(enemyValue.timeToShot)
     };
