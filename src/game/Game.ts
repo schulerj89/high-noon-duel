@@ -30,6 +30,11 @@ import {
   type BountyContractDefinition,
   type DuelModifierDefinition
 } from "../data/duelModifiers";
+import {
+  CONDITIONS,
+  type ConditionDefinition,
+  type ConditionId
+} from "../data/conditions";
 import { DEFAULT_ENEMY, ENEMIES, type EnemyDefinition } from "../data/enemies";
 import { getEnemyBehavior } from "../data/enemyBehaviors";
 import { UPGRADES, type UpgradeDefinition, type UpgradeId } from "../data/upgrades";
@@ -61,12 +66,16 @@ import {
   clearSavedProgression,
   createDefaultProgression,
   derivePlayerStats,
+  formatConditionDuration,
+  getActiveConditionDefinitions,
   getOwnedUpgradeNames,
   loadProgression,
   purchaseUpgrade,
-  recordDuelResult,
+  repairCondition,
   rememberSelectedEnemy,
   saveProgression,
+  settleDuelProgression,
+  type ConditionChange,
   type PlayerProgression,
   type PlayerStats
 } from "./progression";
@@ -210,6 +219,7 @@ export class Game {
   private hitBoxesVisible = false;
   private lastMoneyEarned = 0;
   private lastShopMessage = "";
+  private lastConditionChanges: ConditionChange[] = [];
   private lastLuckyCharmTriggered = false;
   private lastPlayerShotAt: number | null = null;
   private lastEnemyShotAt: number | null = null;
@@ -363,6 +373,7 @@ export class Game {
     this.duelSettled = false;
     this.lastMoneyEarned = 0;
     this.lastShopMessage = "";
+    this.lastConditionChanges = [];
     this.lastLuckyCharmTriggered = false;
     this.lastPlayerShotAt = null;
     this.lastEnemyShotAt = null;
@@ -458,7 +469,7 @@ export class Game {
 
   private createPlayerStats(): PlayerStats {
     return applyPlayerStatsTuning(
-      derivePlayerStats(this.progression.ownedUpgrades),
+      derivePlayerStats(this.progression.ownedUpgrades, this.progression.activeConditions),
       this.tuning
     );
   }
@@ -1011,7 +1022,12 @@ export class Game {
   }
 
   private getMissPunishDelayMs(): number {
-    return GAME_CONFIG.timing.missPunishDelayMs + (1 - this.getEffectiveEnemyTuning().accuracy) * 360;
+    return Math.max(
+      120,
+      GAME_CONFIG.timing.missPunishDelayMs +
+        (1 - this.getEffectiveEnemyTuning().accuracy) * 360 -
+        this.playerStats.missRecoveryPenaltyMs
+    );
   }
 
   private getEarlyDrawBehaviorStats(now: number): Partial<DuelStats> {
@@ -1116,12 +1132,16 @@ export class Game {
     }
 
     const reward = this.state.result.outcome === "win" ? this.getDuelRules().reward : 0;
-    this.progression = recordDuelResult(
-      this.progression,
-      this.state.result.outcome,
+    const progressionResult = settleDuelProgression(this.progression, {
+      result: this.state.result,
       reward,
-      this.selectedEnemy.id
-    );
+      selectedEnemyId: this.selectedEnemy.id,
+      modifierId: this.selectedModifier.id
+    });
+
+    this.progression = progressionResult.progression;
+    this.lastConditionChanges = progressionResult.conditionChanges;
+    this.playerStats = this.createPlayerStats();
     this.lastMoneyEarned = reward;
     this.duelSettled = true;
     this.telemetry = recordTelemetryDuelResult(this.telemetry, {
@@ -1131,6 +1151,8 @@ export class Game {
     });
     saveProgression(this.progression);
     saveTelemetry(this.telemetry);
+    this.updateHitZoneScale();
+    this.updateHitBoxVisibility();
 
     if (reward > 0) {
       this.showRewardToast(reward);
@@ -1162,8 +1184,33 @@ export class Game {
     this.updateOverlay();
   }
 
+  private repairActiveCondition(conditionId: ConditionId): void {
+    const result = repairCondition(this.progression, conditionId);
+
+    if (result.status === "repaired") {
+      this.progression = result.progression;
+      this.playerStats = this.createPlayerStats();
+      this.lastConditionChanges = [result.change];
+      this.lastShopMessage = `${result.condition.name} repaired for $${result.condition.repairCost}.`;
+      saveProgression(this.progression);
+      this.updateHitZoneScale();
+      this.updateHitBoxVisibility();
+    } else if (result.status === "insufficient-funds" && result.condition) {
+      this.lastShopMessage = `Need $${result.condition.repairCost} to repair ${result.condition.name}.`;
+    } else if (result.status === "not-repairable" && result.condition) {
+      this.lastShopMessage = `${result.condition.name} will pass after more duels.`;
+    } else if (result.status === "not-active" && result.condition) {
+      this.lastShopMessage = `${result.condition.name} is not active.`;
+    } else {
+      this.lastShopMessage = "Repair unavailable.";
+    }
+
+    this.renderBountyBoard();
+    this.updateOverlay();
+  }
+
   private resetProgression(): void {
-    if (!window.confirm("Reset money, upgrades, and duel record?")) {
+    if (!window.confirm("Reset money, upgrades, conditions, and duel record?")) {
       return;
     }
 
@@ -1178,6 +1225,7 @@ export class Game {
     this.boardMode = "bounties";
     this.lastMoneyEarned = 0;
     this.lastShopMessage = "Progress reset.";
+    this.lastConditionChanges = [];
     this.rebuildEnemy();
     this.renderBountyBoard();
     this.applyCurrentEnvironment();
@@ -1566,10 +1614,13 @@ export class Game {
       lastShotAt: lastShotAt > 0 ? lastShotAt : undefined,
       hitPauseActive: now < this.hitPauseUntil
     });
+    const shakeAge = lastShotAt > 0 ? now - lastShotAt : Number.POSITIVE_INFINITY;
+    const shakeMultiplier =
+      shakeAge >= 0 && shakeAge <= 220 ? this.playerStats.cameraShakeMultiplier : 1;
 
     this.camera.position.set(
-      baseX + presentation.positionOffset[0],
-      baseY + presentation.positionOffset[1],
+      baseX + presentation.positionOffset[0] * shakeMultiplier,
+      baseY + presentation.positionOffset[1] * shakeMultiplier,
       baseZ + presentation.positionOffset[2] + rules.cameraDistanceOffsetZ
     );
     this.camera.fov = GAME_CONFIG.camera.fov + presentation.fovOffset + rules.cameraFovOffset;
@@ -2142,6 +2193,15 @@ export class Game {
     return performance.now() - drawAt <= this.playerStats.hitZoneHighlightMs;
   }
 
+  private isReticleReady(now = performance.now()): boolean {
+    if (this.playerStats.reticleDelayMs <= 0 || this.state.phase !== "draw") {
+      return true;
+    }
+
+    const drawAt = this.state.stats.drawAt ?? this.state.scheduledDrawAt;
+    return now - drawAt >= this.playerStats.reticleDelayMs;
+  }
+
   private addMissDust(): void {
     const group = new THREE.Group();
     const material = new THREE.MeshBasicMaterial({
@@ -2635,13 +2695,19 @@ export class Game {
       ownedNames.length > 0 ? ownedNames.join(", ") : "None"
     );
     owned.classList.add("owned-upgrades");
+    const conditions = this.createProgressCard("Conditions", this.getActiveConditionSummaryText());
+    conditions.classList.add("active-conditions");
 
-    summary.append(money, record, owned);
+    summary.append(money, record, owned, conditions);
 
-    if (this.lastShopMessage) {
+    const conditionMessage = this.getConditionChangeSummaryText();
+
+    if (this.lastShopMessage || conditionMessage) {
       const message = document.createElement("div");
       message.className = "shop-message";
-      message.textContent = this.lastShopMessage;
+      message.textContent = [this.lastShopMessage, conditionMessage]
+        .filter((text) => text.length > 0)
+        .join(" ");
       summary.append(message);
     }
 
@@ -2662,12 +2728,38 @@ export class Game {
     return card;
   }
 
+  private getActiveConditionSummaryText(): string {
+    if (this.progression.activeConditions.length === 0) {
+      return "None";
+    }
+
+    return this.progression.activeConditions
+      .map((active) => {
+        const condition = CONDITIONS.find((item) => item.id === active.id);
+        return condition
+          ? `${condition.name} (${formatConditionDuration(active)})`
+          : undefined;
+      })
+      .filter((text): text is string => text !== undefined)
+      .join(", ");
+  }
+
+  private getConditionChangeSummaryText(): string {
+    return this.lastConditionChanges.map((change) => change.message).join(" ");
+  }
+
   private createShopList(): HTMLDivElement {
     const list = document.createElement("div");
     list.className = "shop-list";
 
     for (const upgrade of UPGRADES) {
       list.append(this.createUpgradeCard(upgrade));
+    }
+
+    for (const condition of getActiveConditionDefinitions(this.progression.activeConditions)) {
+      if (condition.repairCost !== undefined) {
+        list.append(this.createRepairCard(condition));
+      }
     }
 
     return list;
@@ -2714,6 +2806,48 @@ export class Game {
     return card;
   }
 
+  private createRepairCard(condition: ConditionDefinition): HTMLButtonElement {
+    const active = this.progression.activeConditions.find((item) => item.id === condition.id);
+    const repairCost = condition.repairCost ?? 0;
+    const canAfford = this.progression.money >= repairCost;
+    const card = document.createElement("button");
+    card.className = "upgrade-card repair-card";
+    card.type = "button";
+    card.dataset.conditionId = condition.id;
+    card.disabled = !canAfford;
+    card.addEventListener("click", () => {
+      this.audio.playSfx("buttonClick");
+      this.repairActiveCondition(condition.id);
+    });
+
+    if (!canAfford) {
+      card.classList.add("is-locked");
+    }
+
+    const name = document.createElement("strong");
+    name.textContent = `${condition.repairType === "gunsmith" ? "Gunsmith" : "Doctor"}: ${condition.name}`;
+
+    const cost = document.createElement("span");
+    cost.className = "upgrade-cost";
+    cost.textContent = `$${repairCost}`;
+
+    const description = document.createElement("p");
+    description.textContent = `${condition.uiText} ${
+      active ? `Remaining: ${formatConditionDuration(active)}.` : ""
+    }`;
+
+    const effect = document.createElement("small");
+    effect.className = "upgrade-effect";
+    effect.textContent = condition.effectSummary;
+
+    const status = document.createElement("span");
+    status.className = "upgrade-status";
+    status.textContent = canAfford ? "Repair" : "Need more money";
+
+    card.append(name, cost, description, effect, status);
+    return card;
+  }
+
   private updateOverlay(now = performance.now()): void {
     this.settleDuelResultIfNeeded();
     const isBoard = this.state.phase === "intro";
@@ -2722,7 +2856,7 @@ export class Game {
     const shotResult = this.state.result?.stats.shotResult;
     const resultText = this.getResultText();
     const rules = this.getDuelRules();
-    const showReticle = this.state.phase === "draw" && rules.showReticle;
+    const showReticle = this.state.phase === "draw" && rules.showReticle && this.isReticleReady(now);
 
     this.ui.enemyName.textContent = this.getEnemyBadgeText();
     this.ui.bountyBoard.hidden = !isBoard;
@@ -2790,6 +2924,10 @@ export class Game {
     }
 
     if (this.state.phase === "draw") {
+      if (this.getDuelRules().showReticle && !this.isReticleReady()) {
+        return "Clear your sight.";
+      }
+
       return this.getDuelRules().showReticle ? "Aim and click." : "Point shoot. No reticle.";
     }
 
@@ -2898,6 +3036,12 @@ export class Game {
     return parts.join(", ");
   }
 
+  private getConditionEffectText(): string {
+    return getActiveConditionDefinitions(this.progression.activeConditions)
+      .map((condition) => `${condition.name}: ${condition.effectSummary}`)
+      .join(", ");
+  }
+
   private renderStats(): void {
     this.ui.stats.replaceChildren();
 
@@ -2922,6 +3066,18 @@ export class Game {
 
     if (stats.modifierResultText) {
       rows.push(["Modifier Effect", stats.modifierResultText]);
+    }
+
+    const conditionChangeText = this.getConditionChangeSummaryText();
+
+    if (conditionChangeText) {
+      rows.push(["Consequence", conditionChangeText]);
+    }
+
+    const conditionEffectText = this.getConditionEffectText();
+
+    if (conditionEffectText) {
+      rows.push(["Active Conditions", conditionEffectText]);
     }
 
     if (stats.styleBonusText) {
@@ -2962,6 +3118,8 @@ export class Game {
         label === "Style Bonus" ||
         label === "Behavior" ||
         label === "Modifier Effect" ||
+        label === "Consequence" ||
+        label === "Active Conditions" ||
         label === "Upgrade Help" ||
         label === "Playtest"
       ) {
