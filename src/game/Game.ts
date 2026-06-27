@@ -1,6 +1,28 @@
 import * as THREE from "three";
 import { AudioManager } from "../audio/AudioManager";
 import type { VoiceAudioId } from "../audio/audioManifest";
+import { DevPanel, type CopyBalanceReportResult, type DevPanelSnapshot } from "../debug/DevPanel";
+import {
+  applyPlayerStatsTuning,
+  clearTuningOverrides,
+  createDefaultTuningOverrides,
+  getDrawPauseMaxMs,
+  getDrawPauseMinMs,
+  getEnemyTuning,
+  loadTuningOverrides,
+  saveTuningOverrides,
+  type EffectiveEnemyTuning,
+  type TuningOverrides
+} from "../debug/tuning";
+import {
+  createBalanceReport,
+  getPlaytestSummary,
+  loadTelemetry,
+  recordDuelStarted,
+  recordTelemetryDuelResult,
+  saveTelemetry,
+  type PlaytestTelemetry
+} from "../debug/telemetry";
 import { DEFAULT_ENEMY, ENEMIES, type EnemyDefinition } from "../data/enemies";
 import { UPGRADES, type UpgradeDefinition, type UpgradeId } from "../data/upgrades";
 import { getCameraPresentation } from "../scene/cameraPresentation";
@@ -132,9 +154,12 @@ export class Game {
   private readonly hitZoneByMesh = new Map<THREE.Object3D, HitZoneDefinition>();
   private readonly audio = new AudioManager();
   private readonly ui: UiElements;
+  private readonly devPanel: DevPanel | null;
 
   private progression: PlayerProgression = loadProgression();
-  private playerStats: PlayerStats = derivePlayerStats(this.progression.ownedUpgrades);
+  private tuning: TuningOverrides = loadTuningOverrides();
+  private telemetry: PlaytestTelemetry = loadTelemetry();
+  private playerStats: PlayerStats = this.createPlayerStats();
   private state: DuelState = createIntroDuelState(performance.now());
   private timing: CountdownTiming = this.createRoundTiming();
   private selectedEnemy: EnemyDefinition = getEnemyById(this.progression.selectedEnemyId);
@@ -196,6 +221,12 @@ export class Game {
     this.viewport.append(this.renderer.domElement);
     this.ui = this.createOverlay();
     this.viewport.append(this.ui.overlay);
+    this.devPanel = this.createDevPanel();
+
+    if (this.devPanel) {
+      this.viewport.append(this.devPanel.element);
+    }
+
     this.root.append(this.viewport);
 
     this.buildScene();
@@ -282,7 +313,7 @@ export class Game {
     const now = performance.now();
     this.timing = this.createRoundTiming();
     this.state = startDuel(now, this.timing);
-    this.enemyReactionMs = this.selectedEnemy.reactionTimeMs;
+    this.enemyReactionMs = this.getEffectiveEnemyTuning().reactionTimeMs;
     this.enemyFireAt = null;
     this.missLossAt = null;
     this.fakeouts = this.createFakeoutWindows(now, this.state.scheduledDrawAt);
@@ -316,6 +347,8 @@ export class Game {
 
     this.updateHitZoneScale();
     this.updateHitBoxVisibility();
+    this.telemetry = recordDuelStarted(this.telemetry, this.selectedEnemy);
+    saveTelemetry(this.telemetry);
     this.playDuelStartAudio();
     this.updateOverlay(now);
   };
@@ -358,19 +391,38 @@ export class Game {
   }
 
   private createRoundTiming(): CountdownTiming {
+    const drawPauseMinMs = getDrawPauseMinMs(
+      GAME_CONFIG.timing.drawPauseMinMs,
+      this.tuning
+    );
+    const drawPauseMaxMs = getDrawPauseMaxMs(
+      GAME_CONFIG.timing.drawPauseMaxMs,
+      this.tuning
+    );
+
     return {
       standoffDurationMs: GAME_CONFIG.timing.standoffDurationMs,
       readyDurationMs: GAME_CONFIG.timing.readyDurationMs,
       steadyDurationMs: GAME_CONFIG.timing.steadyDurationMs,
-      drawPauseMs: randomRange(
-        GAME_CONFIG.timing.drawPauseMinMs,
-        GAME_CONFIG.timing.drawPauseMaxMs
-      )
+      drawPauseMs: randomRange(drawPauseMinMs, drawPauseMaxMs)
     };
   }
 
+  private createPlayerStats(): PlayerStats {
+    return applyPlayerStatsTuning(
+      derivePlayerStats(this.progression.ownedUpgrades),
+      this.tuning
+    );
+  }
+
+  private getEffectiveEnemyTuning(): EffectiveEnemyTuning {
+    return getEnemyTuning(this.selectedEnemy, this.tuning);
+  }
+
   private createFakeoutWindows(roundStartedAt: number, scheduledDrawAt: number): FakeoutWindow[] {
-    if (this.selectedEnemy.fakeoutChance <= 0 || Math.random() > this.selectedEnemy.fakeoutChance) {
+    const fakeoutChance = this.getEffectiveEnemyTuning().fakeoutChance;
+
+    if (fakeoutChance <= 0 || Math.random() > fakeoutChance) {
       return [];
     }
 
@@ -380,7 +432,7 @@ export class Game {
       return [];
     }
 
-    const count = this.selectedEnemy.fakeoutChance > 0.55 ? 2 : 1;
+    const count = fakeoutChance > 0.55 ? 2 : 1;
     const windows: FakeoutWindow[] = [];
 
     for (let i = 0; i < count; i += 1) {
@@ -411,6 +463,192 @@ export class Game {
 
     this.resizeObserver = new ResizeObserver(this.handleResize);
     this.resizeObserver.observe(this.viewport);
+  }
+
+  private createDevPanel(): DevPanel | null {
+    if (!import.meta.env.DEV) {
+      return null;
+    }
+
+    return new DevPanel({
+      onTuningChange: (overrides) => this.applyTuningOverrides(overrides),
+      onRestartDuel: () => this.startRound(),
+      onForcePhase: (phase) => this.forceDuelPhase(phase),
+      onForcePlayerWin: () => this.forcePlayerWin(),
+      onForcePlayerLoss: () => this.forcePlayerLoss(),
+      onResetTuning: () => this.resetTuningOverrides(),
+      onCopyBalanceReport: () => this.copyBalanceReport()
+    });
+  }
+
+  private applyTuningOverrides(overrides: TuningOverrides): void {
+    this.tuning = overrides;
+    saveTuningOverrides(this.tuning);
+    this.playerStats = this.createPlayerStats();
+    this.enemyReactionMs = this.getEffectiveEnemyTuning().reactionTimeMs;
+
+    if (this.state.phase === "draw") {
+      const drawAt = this.state.stats.drawAt ?? this.state.scheduledDrawAt;
+      this.enemyFireAt = getEnemyFireAt(drawAt, this.enemyReactionMs);
+    }
+
+    this.updateHitZoneScale();
+    this.updateHitBoxVisibility();
+    this.updateOverlay();
+  }
+
+  private resetTuningOverrides(): void {
+    clearTuningOverrides();
+    this.applyTuningOverrides(createDefaultTuningOverrides());
+  }
+
+  private forceDuelPhase(phase: "ready" | "steady" | "draw"): void {
+    const now = performance.now();
+    this.timing = this.createRoundTiming();
+    this.clearQueuedSubtitles();
+    this.clearSubtitle();
+    this.duelSettled = false;
+    this.enemyHasFired = false;
+    this.enemyReactionMs = this.getEffectiveEnemyTuning().reactionTimeMs;
+    this.enemyFireAt = null;
+    this.missLossAt = null;
+    this.lastPlayerShotAt = null;
+    this.lastEnemyShotAt = null;
+    this.lastMissAt = null;
+
+    if (phase === "ready") {
+      this.state = {
+        phase,
+        roundStartedAt: now - this.timing.standoffDurationMs,
+        phaseStartedAt: now,
+        scheduledDrawAt:
+          now +
+          this.timing.readyDurationMs +
+          this.timing.steadyDurationMs +
+          this.timing.drawPauseMs,
+        stats: {}
+      };
+    } else if (phase === "steady") {
+      this.state = {
+        phase,
+        roundStartedAt:
+          now - this.timing.standoffDurationMs - this.timing.readyDurationMs,
+        phaseStartedAt: now,
+        scheduledDrawAt: now + this.timing.steadyDurationMs + this.timing.drawPauseMs,
+        stats: {}
+      };
+    } else {
+      this.state = {
+        phase,
+        roundStartedAt:
+          now -
+          this.timing.standoffDurationMs -
+          this.timing.readyDurationMs -
+          this.timing.steadyDurationMs,
+        phaseStartedAt: now,
+        scheduledDrawAt: now,
+        stats: {
+          drawAt: now
+        }
+      };
+      this.enemyFireAt = getEnemyFireAt(now, this.enemyReactionMs);
+    }
+
+    this.fakeouts = [];
+    this.spokenFakeoutStartsAt.clear();
+    this.updateOverlay(now);
+  }
+
+  private forcePlayerWin(): void {
+    const now = performance.now();
+    const drawState = this.createForcedDrawState(now);
+    this.duelSettled = false;
+    this.enemyHasFired = false;
+    this.lastPlayerShotAt = now;
+    this.showPlayerMuzzleFlash();
+    this.audio.playSfx("bodyHit");
+    this.hitPauseStartedAt = now;
+    this.hitPauseUntil = now + GAME_CONFIG.timing.hitPauseMs;
+    this.state = resolvePlayerHit(
+      drawState,
+      now,
+      { shotResult: "torso" },
+      this.enemyReactionMs
+    );
+    this.updateOverlay(now);
+  }
+
+  private forcePlayerLoss(): void {
+    const now = performance.now();
+    const drawState = this.createForcedDrawState(now);
+    this.duelSettled = false;
+    this.enemyHasFired = true;
+    this.lastEnemyShotAt = now;
+    this.audio.playSfx("gunshotEnemy");
+
+    if (this.enemyMuzzleFlash) {
+      this.enemyMuzzleFlash.visible = true;
+    }
+
+    this.state = resolveEnemyShot(drawState, now, "enemy was faster");
+    this.updateOverlay(now);
+  }
+
+  private createForcedDrawState(now: number): DuelState {
+    const drawAt = this.state.stats.drawAt ?? now;
+    this.enemyReactionMs = this.getEffectiveEnemyTuning().reactionTimeMs;
+    this.enemyFireAt = getEnemyFireAt(drawAt, this.enemyReactionMs);
+
+    return {
+      ...this.state,
+      phase: "draw",
+      phaseStartedAt: drawAt,
+      scheduledDrawAt: drawAt,
+      stats: {
+        ...this.state.stats,
+        drawAt
+      },
+      result: undefined
+    };
+  }
+
+  private async copyBalanceReport(): Promise<CopyBalanceReportResult> {
+    const report = createBalanceReport(
+      this.telemetry,
+      this.tuning,
+      this.progression.ownedUpgrades
+    );
+    const json = JSON.stringify(report, null, 2);
+
+    try {
+      await navigator.clipboard.writeText(json);
+      return { copied: true, json };
+    } catch {
+      return { copied: false, json };
+    }
+  }
+
+  private updateDevPanel(): void {
+    this.devPanel?.update(this.createDevPanelSnapshot());
+  }
+
+  private createDevPanelSnapshot(): DevPanelSnapshot {
+    const effectiveEnemy = this.getEffectiveEnemyTuning();
+
+    return {
+      selectedEnemyId: this.selectedEnemy.id,
+      selectedEnemyName: this.selectedEnemy.name,
+      phase: this.state.phase,
+      tuning: this.tuning,
+      effectiveEnemy,
+      drawPauseMinMs: getDrawPauseMinMs(GAME_CONFIG.timing.drawPauseMinMs, this.tuning),
+      drawPauseMaxMs: getDrawPauseMaxMs(GAME_CONFIG.timing.drawPauseMaxMs, this.tuning),
+      playerShotTimingBonusMs: this.tuning.playerShotTimingBonusMs ?? 0,
+      focusGraceMs: this.tuning.focusGraceMs ?? 0,
+      hitZoneScaleMultiplier: this.tuning.hitZoneScaleMultiplier ?? 1,
+      reticleSwayMultiplier: this.tuning.reticleSwayMultiplier ?? 1,
+      playtestSummary: getPlaytestSummary(this.telemetry, this.selectedEnemy.id)
+    };
   }
 
   private readonly handleFirstUserInteraction = (): void => {
@@ -490,6 +728,17 @@ export class Game {
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
     this.audio.unlock();
+
+    if (event.code === "Backquote" || event.code === "F2") {
+      event.preventDefault();
+      this.devPanel?.toggle();
+      this.updateDevPanel();
+      return;
+    }
+
+    if (isEditableEventTarget(event.target)) {
+      return;
+    }
 
     if (event.code === "Space") {
       event.preventDefault();
@@ -665,7 +914,7 @@ export class Game {
   }
 
   private getMissPunishDelayMs(): number {
-    return GAME_CONFIG.timing.missPunishDelayMs + (1 - this.selectedEnemy.accuracy) * 360;
+    return GAME_CONFIG.timing.missPunishDelayMs + (1 - this.getEffectiveEnemyTuning().accuracy) * 360;
   }
 
   private resolveEnemyFire(reason: DuelLossReason, firedAt: number): void {
@@ -702,7 +951,13 @@ export class Game {
     );
     this.lastMoneyEarned = reward;
     this.duelSettled = true;
+    this.telemetry = recordTelemetryDuelResult(this.telemetry, {
+      enemy: this.selectedEnemy,
+      result: this.state.result,
+      ownedUpgrades: this.progression.ownedUpgrades
+    });
     saveProgression(this.progression);
+    saveTelemetry(this.telemetry);
 
     if (reward > 0) {
       this.showRewardToast(reward);
@@ -717,7 +972,7 @@ export class Game {
 
     if (result.status === "purchased") {
       this.progression = result.progression;
-      this.playerStats = derivePlayerStats(this.progression.ownedUpgrades);
+      this.playerStats = this.createPlayerStats();
       this.lastShopMessage = `${result.upgrade.name} purchased.`;
       saveProgression(this.progression);
       this.updateHitZoneScale();
@@ -743,7 +998,7 @@ export class Game {
     clearSavedProgression();
     this.progression = createDefaultProgression();
     saveProgression(this.progression);
-    this.playerStats = derivePlayerStats(this.progression.ownedUpgrades);
+    this.playerStats = this.createPlayerStats();
     this.selectedEnemy = getEnemyById(this.progression.selectedEnemyId);
     this.boardMode = "bounties";
     this.lastMoneyEarned = 0;
@@ -2179,6 +2434,7 @@ export class Game {
     this.updateSubtitle(now);
     this.updateRewardToast(now);
     this.renderStats();
+    this.updateDevPanel();
   }
 
   private getEnemyBadgeText(): string {
@@ -2343,11 +2599,21 @@ export class Game {
       rows.push(["Upgrade Help", upgradeHelp]);
     }
 
+    const playtestSummary = getPlaytestSummary(this.telemetry, this.selectedEnemy.id);
+    rows.push([
+      "Playtest",
+      `${playtestSummary.wins}W-${playtestSummary.losses}L / ${Math.round(playtestSummary.winRate * 100)}%`
+    ]);
+
+    if (playtestSummary.averageReactionTimeMs !== null) {
+      rows.push(["Avg Reaction", formatDuration(playtestSummary.averageReactionTimeMs)]);
+    }
+
     for (const [label, value] of rows) {
       const row = document.createElement("div");
       row.className = "stat-row";
 
-      if (label === "Style Bonus" || label === "Upgrade Help") {
+      if (label === "Style Bonus" || label === "Upgrade Help" || label === "Playtest") {
         row.classList.add("is-wide");
       }
 
@@ -2377,4 +2643,17 @@ function getEnemyById(enemyId: string): EnemyDefinition {
 
 function appendResultText(currentText: string | undefined, nextText: string): string {
   return currentText ? `${currentText} ${nextText}` : nextText;
+}
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  );
 }

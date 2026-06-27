@@ -201,6 +201,145 @@ button:disabled {
   text-transform: none;
 }
 
+.dev-panel {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 8;
+  width: min(420px, calc(100vw - 28px));
+  max-height: min(680px, calc(100vh - 28px));
+  overflow: auto;
+  border: 2px solid rgba(246, 200, 110, 0.52);
+  border-radius: 6px;
+  background: rgba(20, 14, 10, 0.94);
+  box-shadow: 0 20px 48px rgba(10, 6, 4, 0.48);
+  color: #fff6dc;
+  padding: 12px;
+  pointer-events: auto;
+}
+
+.dev-panel[hidden] {
+  display: none;
+}
+
+.dev-panel-header,
+.dev-panel-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dev-panel-header {
+  justify-content: space-between;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.dev-panel-header strong {
+  color: #ffe86b;
+  font-size: 0.98rem;
+}
+
+.dev-panel-header span,
+.dev-panel-readout,
+.dev-panel-copy-status {
+  color: rgba(255, 246, 220, 0.72);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.dev-panel-readout {
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+
+.dev-panel-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.dev-control {
+  display: grid;
+  grid-template-columns: 1fr 88px 48px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid rgba(255, 241, 199, 0.16);
+  border-radius: 4px;
+  background: rgba(255, 246, 220, 0.06);
+  padding: 6px;
+}
+
+.dev-control span,
+.dev-control strong {
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.dev-control span {
+  color: rgba(255, 246, 220, 0.74);
+}
+
+.dev-control strong {
+  color: #ffe86b;
+  text-align: right;
+}
+
+.dev-control input {
+  min-width: 0;
+  border: 1px solid rgba(255, 241, 199, 0.28);
+  border-radius: 3px;
+  background: rgba(8, 6, 5, 0.62);
+  color: #fff6dc;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 4px 5px;
+}
+
+.dev-control input:focus {
+  border-color: rgba(255, 232, 107, 0.86);
+  outline: none;
+}
+
+.dev-panel-buttons {
+  margin-top: 10px;
+}
+
+.dev-panel button {
+  min-height: 30px;
+  border: 1px solid rgba(255, 241, 199, 0.24);
+  border-radius: 4px;
+  background: rgba(45, 33, 24, 0.9);
+  color: #fff4c2;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 0 9px;
+  text-transform: uppercase;
+}
+
+.dev-panel button:hover,
+.dev-panel button:focus-visible {
+  border-color: rgba(255, 232, 107, 0.9);
+  outline: none;
+}
+
+.dev-panel-report {
+  width: 100%;
+  min-height: 170px;
+  margin-top: 8px;
+  border: 1px solid rgba(255, 241, 199, 0.24);
+  border-radius: 4px;
+  background: rgba(8, 6, 5, 0.72);
+  color: #fff6dc;
+  font: 0.72rem ui-monospace, SFMono-Regular, Consolas, monospace;
+  padding: 8px;
+  resize: vertical;
+}
+
 .volume-control {
   display: grid;
   grid-template-columns: 56px minmax(120px, 1fr) 44px;
