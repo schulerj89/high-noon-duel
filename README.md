@@ -71,7 +71,7 @@ The script reads `scripts/voice-lines.json`, skips existing files by default, an
 
 ## Local Audio Assets
 
-SFX and town wind ambience placeholders are generated without external services:
+SFX placeholders are generated without external services:
 
 ```bash
 npm run generate:audio
@@ -87,6 +87,7 @@ This writes WAV files into `public/audio/`. Western music tracks are sourced MP3
 - Bounties button: return to bounty selection from the shop.
 - Reset Progress button: clears saved money, record, and upgrades after confirmation.
 - Audio On/Off button: mute or unmute local audio.
+- Volume button: adjust master, music, SFX, and voice volume.
 - Space: start the currently selected bounty or restart after a completed duel.
 - Left click before DRAW: early draw loss.
 - Left click after DRAW: fire at the reticle.

@@ -35,7 +35,7 @@ interface AudioTrack<Id extends string> {
 const AUDIO_PREFERENCES_KEY = "high-noon-duel:audio-preferences:v1";
 const DEFAULT_PREFERENCES: AudioPreferences = {
   masterVolume: 0.85,
-  musicVolume: 0.45,
+  musicVolume: 0.82,
   sfxVolume: 0.85,
   voiceVolume: 0.9,
   muted: false

@@ -2,7 +2,7 @@
 
 Place generated or recorded audio files in this folder. The game looks for these files by exact filename and continues without crashing when files are missing.
 
-Run `npm run generate:audio` to regenerate the local placeholder SFX and town wind ambience WAV file. Voice files are generated separately because they use the optional ElevenLabs developer workflow.
+Run `npm run generate:audio` to regenerate the local placeholder SFX files. Voice files are generated separately because they use the optional ElevenLabs developer workflow.
 
 Music tracks are sourced MP3 files. See `CREDITS.md` for attribution and license details.
 
@@ -39,7 +39,6 @@ Generated ElevenLabs voice files should be placed in `public/audio/voice/`.
 ## Music and Ambience
 
 - `music/crossing-the-divide.mp3`
-- `music-town-wind-loop.wav`
 - `music/smoking-gun.mp3`
 - `music/cowboy-sting.mp3`
 - `music/western-streets.mp3`

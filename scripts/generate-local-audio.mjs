@@ -23,8 +23,7 @@ async function main() {
     ["sfx-dust-impact.wav", createDustImpact()],
     ["sfx-body-hit.wav", createBodyHit()],
     ["sfx-poster-paper.wav", createPosterPaper()],
-    ["sfx-button-click.wav", createButtonClick()],
-    ["music-town-wind-loop.wav", createTownWindLoop()]
+    ["sfx-button-click.wav", createButtonClick()]
   ];
 
   for (const [fileName, samples] of assets) {
@@ -140,14 +139,6 @@ function createButtonClick() {
   return normalize(samples, 0.5);
 }
 
-function createTownWindLoop() {
-  const duration = 18;
-  const samples = silence(duration);
-  add(samples, windBed(duration, 131, 0.34), 0);
-  add(samples, whistleGust(duration, 880, 0.09), 0);
-  return loopFade(normalize(samples, 0.6), 0.2);
-}
-
 function metallicClick(duration, frequency, gain, seed) {
   const rng = createRandom(seed);
 
@@ -162,27 +153,6 @@ function tone(duration, frequency, gain, attack) {
   return makeSamples(duration, (t) => {
     const envelope = (1 - Math.exp(-t * attack)) * Math.exp(-t * 0.35);
     return Math.sin(TAU * frequency * t) * envelope * gain;
-  });
-}
-
-function windBed(duration, seed, gain) {
-  const rng = createRandom(seed);
-  let low = 0;
-  let mid = 0;
-
-  return makeSamples(duration, (t) => {
-    const raw = rng() * 2 - 1;
-    low += (raw - low) * 0.008;
-    mid += (raw - mid) * 0.035;
-    const gust = 0.65 + Math.sin(TAU * 0.071 * t + 1.7) * 0.22 + Math.sin(TAU * 0.037 * t) * 0.12;
-    return (low * 0.8 + mid * 0.2) * gust * gain;
-  });
-}
-
-function whistleGust(duration, frequency, gain) {
-  return makeSamples(duration, (t) => {
-    const gust = Math.max(0, Math.sin(TAU * 0.052 * t - 0.8));
-    return Math.sin(TAU * (frequency + Math.sin(TAU * 0.11 * t) * 80) * t) * gust * gain;
   });
 }
 
@@ -229,19 +199,6 @@ function normalize(samples, peak = 0.9) {
   const gain = peak / max;
   for (let i = 0; i < samples.length; i += 1) {
     samples[i] *= gain;
-  }
-
-  return samples;
-}
-
-function loopFade(samples, seconds) {
-  const fadeLength = Math.min(samples.length, Math.floor(seconds * SAMPLE_RATE));
-
-  for (let i = 0; i < fadeLength; i += 1) {
-    const fadeIn = i / fadeLength;
-    const fadeOut = 1 - i / fadeLength;
-    samples[i] *= fadeIn;
-    samples[samples.length - 1 - i] *= fadeOut;
   }
 
   return samples;

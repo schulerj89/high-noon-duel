@@ -26,7 +26,6 @@ export type SfxAudioId =
 
 export type MusicAudioId =
   | "bountyBoardLoop"
-  | "townWindLoop"
   | "duelTensionLoop"
   | "victorySting"
   | "defeatSting";
@@ -66,7 +65,6 @@ export const AUDIO_MANIFEST: AudioManifest = {
   },
   music: {
     bountyBoardLoop: "/audio/music/crossing-the-divide.mp3",
-    townWindLoop: "/audio/music-town-wind-loop.wav",
     duelTensionLoop: "/audio/music/smoking-gun.mp3",
     victorySting: "/audio/music/cowboy-sting.mp3",
     defeatSting: "/audio/music/western-streets.mp3"

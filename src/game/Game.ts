@@ -50,7 +50,23 @@ interface UiElements {
   actionButton: HTMLButtonElement;
   backButton: HTMLButtonElement;
   muteButton: HTMLButtonElement;
+  audioSettingsButton: HTMLButtonElement;
+  audioSettingsPanel: HTMLDivElement;
+  masterVolumeInput: HTMLInputElement;
+  masterVolumeValue: HTMLSpanElement;
+  musicVolumeInput: HTMLInputElement;
+  musicVolumeValue: HTMLSpanElement;
+  sfxVolumeInput: HTMLInputElement;
+  sfxVolumeValue: HTMLSpanElement;
+  voiceVolumeInput: HTMLInputElement;
+  voiceVolumeValue: HTMLSpanElement;
   crosshair: HTMLDivElement;
+}
+
+interface VolumeControlElements {
+  row: HTMLLabelElement;
+  input: HTMLInputElement;
+  value: HTMLSpanElement;
 }
 
 type Vec3Tuple = [number, number, number];
@@ -156,6 +172,7 @@ export class Game {
     this.handleResize();
     this.updateOverlay();
     this.updateMuteButton();
+    this.updateAudioSettingsControls();
     this.playBountyBoardAudio();
   }
 
@@ -177,6 +194,11 @@ export class Game {
     this.ui.actionButton.removeEventListener("click", this.handleRestartButtonClick);
     this.ui.backButton.removeEventListener("click", this.handleBackButtonClick);
     this.ui.muteButton.removeEventListener("click", this.handleMuteButtonClick);
+    this.ui.audioSettingsButton.removeEventListener("click", this.handleAudioSettingsButtonClick);
+    this.ui.masterVolumeInput.removeEventListener("input", this.handleMasterVolumeInput);
+    this.ui.musicVolumeInput.removeEventListener("input", this.handleMusicVolumeInput);
+    this.ui.sfxVolumeInput.removeEventListener("input", this.handleSfxVolumeInput);
+    this.ui.voiceVolumeInput.removeEventListener("input", this.handleVoiceVolumeInput);
     this.resizeObserver?.disconnect();
     this.audio.stopAll();
 
@@ -345,6 +367,11 @@ export class Game {
     this.ui.actionButton.addEventListener("click", this.handleRestartButtonClick);
     this.ui.backButton.addEventListener("click", this.handleBackButtonClick);
     this.ui.muteButton.addEventListener("click", this.handleMuteButtonClick);
+    this.ui.audioSettingsButton.addEventListener("click", this.handleAudioSettingsButtonClick);
+    this.ui.masterVolumeInput.addEventListener("input", this.handleMasterVolumeInput);
+    this.ui.musicVolumeInput.addEventListener("input", this.handleMusicVolumeInput);
+    this.ui.sfxVolumeInput.addEventListener("input", this.handleSfxVolumeInput);
+    this.ui.voiceVolumeInput.addEventListener("input", this.handleVoiceVolumeInput);
 
     this.resizeObserver = new ResizeObserver(this.handleResize);
     this.resizeObserver.observe(this.viewport);
@@ -375,6 +402,32 @@ export class Game {
     }
 
     this.updateMuteButton();
+  };
+
+  private readonly handleAudioSettingsButtonClick = (): void => {
+    this.audio.unlock();
+    this.audio.playSfx("buttonClick");
+    this.setAudioSettingsVisible(this.ui.audioSettingsPanel.hidden);
+  };
+
+  private readonly handleMasterVolumeInput = (): void => {
+    this.audio.setMasterVolume(this.readSliderVolume(this.ui.masterVolumeInput));
+    this.updateAudioSettingsControls();
+  };
+
+  private readonly handleMusicVolumeInput = (): void => {
+    this.audio.setMusicVolume(this.readSliderVolume(this.ui.musicVolumeInput));
+    this.updateAudioSettingsControls();
+  };
+
+  private readonly handleSfxVolumeInput = (): void => {
+    this.audio.setSfxVolume(this.readSliderVolume(this.ui.sfxVolumeInput));
+    this.updateAudioSettingsControls();
+  };
+
+  private readonly handleVoiceVolumeInput = (): void => {
+    this.audio.setVoiceVolume(this.readSliderVolume(this.ui.voiceVolumeInput));
+    this.updateAudioSettingsControls();
   };
 
   private readonly handleResize = (): void => {
@@ -673,15 +726,10 @@ export class Game {
     this.audio.stopMusic("duelTensionLoop", 450);
     this.audio.stopMusic("victorySting", 100);
     this.audio.stopMusic("defeatSting", 100);
-    this.audio.playMusic("townWindLoop", {
-      loop: true,
-      fadeInMs: 500,
-      volume: 0.55
-    });
     this.audio.playMusic("bountyBoardLoop", {
       loop: true,
       fadeInMs: 500,
-      volume: 0.65
+      volume: 1
     });
     this.audio.playVoice("welcomeBoard");
   }
@@ -690,15 +738,10 @@ export class Game {
     this.audio.stopMusic("bountyBoardLoop", 350);
     this.audio.stopMusic("victorySting", 100);
     this.audio.stopMusic("defeatSting", 100);
-    this.audio.playMusic("townWindLoop", {
-      loop: true,
-      fadeInMs: 300,
-      volume: 0.5
-    });
     this.audio.playMusic("duelTensionLoop", {
       loop: true,
       fadeInMs: 450,
-      volume: 0.72
+      volume: 1
     });
     this.audio.playVoice("ready");
     this.audio.playSfx("holsterLeather");
@@ -753,6 +796,36 @@ export class Game {
     const muted = this.audio.isMuted();
     this.ui.muteButton.textContent = muted ? "Audio Off" : "Audio On";
     this.ui.muteButton.setAttribute("aria-pressed", String(muted));
+  }
+
+  private updateAudioSettingsControls(): void {
+    const preferences = this.audio.getPreferences();
+
+    this.setVolumeControlValue(this.ui.masterVolumeInput, this.ui.masterVolumeValue, preferences.masterVolume);
+    this.setVolumeControlValue(this.ui.musicVolumeInput, this.ui.musicVolumeValue, preferences.musicVolume);
+    this.setVolumeControlValue(this.ui.sfxVolumeInput, this.ui.sfxVolumeValue, preferences.sfxVolume);
+    this.setVolumeControlValue(this.ui.voiceVolumeInput, this.ui.voiceVolumeValue, preferences.voiceVolume);
+  }
+
+  private setVolumeControlValue(
+    input: HTMLInputElement,
+    valueLabel: HTMLSpanElement,
+    value: number
+  ): void {
+    const percent = Math.round(value * 100);
+
+    input.value = String(percent);
+    valueLabel.textContent = `${percent}%`;
+  }
+
+  private readSliderVolume(input: HTMLInputElement): number {
+    const value = Number(input.value);
+    return Number.isFinite(value) ? Math.min(1, Math.max(0, value / 100)) : 0;
+  }
+
+  private setAudioSettingsVisible(visible: boolean): void {
+    this.ui.audioSettingsPanel.hidden = !visible;
+    this.ui.audioSettingsButton.setAttribute("aria-expanded", String(visible));
   }
 
   private getWinVoiceLineId(): "cleanShot" | "disarm" | "headshot" | "bountyClaimed" {
@@ -1374,9 +1447,35 @@ export class Game {
     muteButton.textContent = "Audio On";
     muteButton.setAttribute("aria-pressed", "false");
 
+    const audioSettingsButton = document.createElement("button");
+    audioSettingsButton.className = "audio-settings-button";
+    audioSettingsButton.type = "button";
+    audioSettingsButton.textContent = "Volume";
+    audioSettingsButton.setAttribute("aria-expanded", "false");
+
+    const audioSettingsPanel = document.createElement("div");
+    audioSettingsPanel.className = "audio-settings-panel";
+    audioSettingsPanel.hidden = true;
+
+    const audioPreferences = this.audio.getPreferences();
+    const masterVolume = this.createVolumeControl("Master", audioPreferences.masterVolume);
+    const musicVolume = this.createVolumeControl("Music", audioPreferences.musicVolume);
+    const sfxVolume = this.createVolumeControl("SFX", audioPreferences.sfxVolume);
+    const voiceVolume = this.createVolumeControl("Voice", audioPreferences.voiceVolume);
+    audioSettingsPanel.append(
+      masterVolume.row,
+      musicVolume.row,
+      sfxVolume.row,
+      voiceVolume.row
+    );
+
+    const audioControls = document.createElement("div");
+    audioControls.className = "audio-controls";
+    audioControls.append(muteButton, audioSettingsButton, audioSettingsPanel);
+
     const topStatus = document.createElement("div");
     topStatus.className = "top-status";
-    topStatus.append(enemyBadge, muteButton);
+    topStatus.append(enemyBadge, audioControls);
 
     topBar.append(title, topStatus);
 
@@ -1425,7 +1524,46 @@ export class Game {
       actionButton,
       backButton,
       muteButton,
+      audioSettingsButton,
+      audioSettingsPanel,
+      masterVolumeInput: masterVolume.input,
+      masterVolumeValue: masterVolume.value,
+      musicVolumeInput: musicVolume.input,
+      musicVolumeValue: musicVolume.value,
+      sfxVolumeInput: sfxVolume.input,
+      sfxVolumeValue: sfxVolume.value,
+      voiceVolumeInput: voiceVolume.input,
+      voiceVolumeValue: voiceVolume.value,
       crosshair
+    };
+  }
+
+  private createVolumeControl(label: string, value: number): VolumeControlElements {
+    const row = document.createElement("label");
+    row.className = "volume-control";
+
+    const labelText = document.createElement("span");
+    labelText.className = "volume-label";
+    labelText.textContent = label;
+
+    const input = document.createElement("input");
+    input.className = "volume-slider";
+    input.type = "range";
+    input.min = "0";
+    input.max = "100";
+    input.step = "1";
+    input.value = String(Math.round(value * 100));
+
+    const valueText = document.createElement("span");
+    valueText.className = "volume-value";
+    valueText.textContent = `${Math.round(value * 100)}%`;
+
+    row.append(labelText, input, valueText);
+
+    return {
+      row,
+      input,
+      value: valueText
     };
   }
 
