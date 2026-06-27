@@ -1,6 +1,20 @@
 import * as THREE from "three";
 import { DEFAULT_ENEMY, ENEMIES, type EnemyDefinition } from "../data/enemies";
+import { UPGRADES, type UpgradeDefinition, type UpgradeId } from "../data/upgrades";
 import { GAME_CONFIG } from "./config";
+import {
+  clearSavedProgression,
+  createDefaultProgression,
+  derivePlayerStats,
+  getOwnedUpgradeNames,
+  loadProgression,
+  purchaseUpgrade,
+  recordDuelResult,
+  rememberSelectedEnemy,
+  saveProgression,
+  type PlayerProgression,
+  type PlayerStats
+} from "./progression";
 import {
   formatShotResult,
   getEnemyFireAt,
@@ -37,6 +51,7 @@ interface UiElements {
 }
 
 type Vec3Tuple = [number, number, number];
+type BoardMode = "bounties" | "shop";
 type DuelLossReason = "enemy was faster" | "missed shot";
 
 interface FakeoutWindow {
@@ -52,6 +67,12 @@ interface EnemyMaterials {
   skin: THREE.MeshStandardMaterial;
 }
 
+interface PlayerShotTiming {
+  beatsEnemy: boolean;
+  enemyFiredAt: number;
+  luckyCharmTriggered: boolean;
+}
+
 export class Game {
   private readonly root: HTMLElement;
   private readonly viewport: HTMLDivElement;
@@ -65,9 +86,12 @@ export class Game {
   private readonly hitZoneByMesh = new Map<THREE.Object3D, HitZoneDefinition>();
   private readonly ui: UiElements;
 
+  private progression: PlayerProgression = loadProgression();
+  private playerStats: PlayerStats = derivePlayerStats(this.progression.ownedUpgrades);
   private state: DuelState = createIntroDuelState(performance.now());
   private timing: CountdownTiming = this.createRoundTiming();
-  private selectedEnemy: EnemyDefinition = DEFAULT_ENEMY;
+  private selectedEnemy: EnemyDefinition = getEnemyById(this.progression.selectedEnemyId);
+  private boardMode: BoardMode = "bounties";
   private resizeObserver: ResizeObserver | null = null;
   private animationFrameId: number | null = null;
   private enemyReactionMs: number = DEFAULT_ENEMY.reactionTimeMs;
@@ -75,7 +99,11 @@ export class Game {
   private missLossAt: number | null = null;
   private fakeouts: FakeoutWindow[] = [];
   private enemyHasFired = false;
+  private duelSettled = false;
   private hitBoxesVisible = false;
+  private lastMoneyEarned = 0;
+  private lastShopMessage = "";
+  private lastLuckyCharmTriggered = false;
   private lastPlayerShotAt: number | null = null;
   private lastEnemyShotAt: number | null = null;
   private lastMissAt: number | null = null;
@@ -191,6 +219,10 @@ export class Game {
     this.missLossAt = null;
     this.fakeouts = this.createFakeoutWindows(now, this.state.scheduledDrawAt);
     this.enemyHasFired = false;
+    this.duelSettled = false;
+    this.lastMoneyEarned = 0;
+    this.lastShopMessage = "";
+    this.lastLuckyCharmTriggered = false;
     this.lastPlayerShotAt = null;
     this.lastEnemyShotAt = null;
     this.lastMissAt = null;
@@ -217,10 +249,13 @@ export class Game {
       this.missDustGroup.visible = false;
     }
 
+    this.updateHitZoneScale();
+    this.updateHitBoxVisibility();
     this.updateOverlay();
   };
 
   private readonly showBountyBoard = (): void => {
+    this.boardMode = "bounties";
     this.state = createIntroDuelState(performance.now());
     this.enemyFireAt = null;
     this.missLossAt = null;
@@ -240,12 +275,16 @@ export class Game {
     }
 
     this.updateEnemyVisual();
+    this.renderBountyBoard();
     this.updateOverlay();
   };
 
   private selectEnemy(enemy: EnemyDefinition): void {
     this.selectedEnemy = enemy;
+    this.progression = rememberSelectedEnemy(this.progression, enemy.id);
+    saveProgression(this.progression);
     this.updateEnemyVisual();
+    this.renderBountyBoard();
     this.startRound();
   }
 
@@ -372,22 +411,17 @@ export class Game {
       return;
     }
 
-    if (this.enemyFireAt !== null && now >= this.enemyFireAt) {
-      this.resolveEnemyFire("enemy was faster", this.enemyFireAt);
-      this.updateOverlay();
-      return;
-    }
-
     this.lastPlayerShotAt = now;
     this.showPlayerMuzzleFlash();
 
     const hitZone = this.getHitZoneUnderReticle();
-    const shotScore = scoreHitZone(hitZone);
+    const baseShotScore = scoreHitZone(hitZone);
+    const timing = this.evaluatePlayerShotTiming(now);
 
-    if (shotScore.shotResult === "miss") {
+    if (baseShotScore.shotResult === "miss") {
       this.lastMissAt = now;
       this.showMissDust();
-      this.state = recordPlayerMiss(this.state, now, shotScore);
+      this.state = recordPlayerMiss(this.state, now, baseShotScore);
       this.missLossAt = getMissPunishFireAt(
         now,
         this.enemyFireAt ?? getEnemyFireAt(this.state.stats.drawAt ?? now, this.enemyReactionMs),
@@ -397,6 +431,23 @@ export class Game {
       return;
     }
 
+    if (!timing.beatsEnemy) {
+      this.resolveEnemyFire("enemy was faster", timing.enemyFiredAt);
+      this.updateOverlay();
+      return;
+    }
+
+    const shotScore = timing.luckyCharmTriggered
+      ? {
+          ...baseShotScore,
+          styleBonusText: appendResultText(
+            baseShotScore.styleBonusText,
+            "Lucky Charm saved a near loss."
+          )
+        }
+      : baseShotScore;
+
+    this.lastLuckyCharmTriggered = timing.luckyCharmTriggered;
     this.state = resolvePlayerHit(this.state, now, shotScore, this.enemyReactionMs);
 
     this.updateOverlay();
@@ -407,7 +458,14 @@ export class Game {
       return;
     }
 
-    if (this.state.phase === "draw" && this.enemyFireAt !== null && now >= this.enemyFireAt) {
+    const enemyResolveAt = this.getEnemyResolveAt();
+
+    if (
+      this.state.phase === "draw" &&
+      this.enemyFireAt !== null &&
+      enemyResolveAt !== null &&
+      now >= enemyResolveAt
+    ) {
       this.resolveEnemyFire("enemy was faster", this.enemyFireAt);
       return;
     }
@@ -415,6 +473,44 @@ export class Game {
     if (this.state.phase === "missed" && this.missLossAt !== null && now >= this.missLossAt) {
       this.resolveEnemyFire("missed shot", this.missLossAt);
     }
+  }
+
+  private evaluatePlayerShotTiming(firedAt: number): PlayerShotTiming {
+    const drawAt = this.state.stats.drawAt ?? this.state.scheduledDrawAt;
+    const enemyFiredAt = this.enemyFireAt ?? getEnemyFireAt(drawAt, this.enemyReactionMs);
+    const effectiveFiredAt = firedAt - this.playerStats.shotTimingBonusMs;
+    const guaranteedDeadline = enemyFiredAt + this.playerStats.focusGraceMs;
+
+    if (effectiveFiredAt <= guaranteedDeadline) {
+      return {
+        beatsEnemy: true,
+        enemyFiredAt,
+        luckyCharmTriggered: false
+      };
+    }
+
+    const luckyWindowMs =
+      this.playerStats.luckyCharmChance > 0 ? this.playerStats.luckyCharmWindowMs : 0;
+    const isBarelyLate = effectiveFiredAt <= guaranteedDeadline + luckyWindowMs;
+    const luckyCharmTriggered =
+      isBarelyLate && Math.random() < this.playerStats.luckyCharmChance;
+
+    return {
+      beatsEnemy: luckyCharmTriggered,
+      enemyFiredAt,
+      luckyCharmTriggered
+    };
+  }
+
+  private getEnemyResolveAt(): number | null {
+    if (this.enemyFireAt === null) {
+      return null;
+    }
+
+    const luckyWindowMs =
+      this.playerStats.luckyCharmChance > 0 ? this.playerStats.luckyCharmWindowMs : 0;
+
+    return this.enemyFireAt + this.playerStats.focusGraceMs + luckyWindowMs;
   }
 
   private getMissPunishDelayMs(): number {
@@ -427,13 +523,73 @@ export class Game {
     }
 
     this.enemyHasFired = true;
-    this.lastEnemyShotAt = firedAt;
+    this.lastEnemyShotAt = performance.now();
 
     if (this.enemyMuzzleFlash) {
       this.enemyMuzzleFlash.visible = true;
     }
 
     this.state = resolveEnemyShot(this.state, firedAt, reason);
+  }
+
+  private settleDuelResultIfNeeded(): void {
+    if (this.duelSettled || this.state.phase !== "resolved" || !this.state.result) {
+      return;
+    }
+
+    const reward = this.state.result.outcome === "win" ? this.selectedEnemy.reward : 0;
+    this.progression = recordDuelResult(
+      this.progression,
+      this.state.result.outcome,
+      reward,
+      this.selectedEnemy.id
+    );
+    this.lastMoneyEarned = reward;
+    this.duelSettled = true;
+    saveProgression(this.progression);
+    this.renderBountyBoard();
+  }
+
+  private buyUpgrade(upgradeId: UpgradeId): void {
+    const result = purchaseUpgrade(this.progression, upgradeId);
+
+    if (result.status === "purchased") {
+      this.progression = result.progression;
+      this.playerStats = derivePlayerStats(this.progression.ownedUpgrades);
+      this.lastShopMessage = `${result.upgrade.name} purchased.`;
+      saveProgression(this.progression);
+      this.updateHitZoneScale();
+      this.updateHitBoxVisibility();
+    } else if (result.status === "owned" && result.upgrade) {
+      this.lastShopMessage = `${result.upgrade.name} is already owned.`;
+    } else if (result.status === "insufficient-funds" && result.upgrade) {
+      this.lastShopMessage = `Need $${result.upgrade.cost} for ${result.upgrade.name}.`;
+    } else {
+      this.lastShopMessage = "Upgrade unavailable.";
+    }
+
+    this.renderBountyBoard();
+    this.updateOverlay();
+  }
+
+  private resetProgression(): void {
+    if (!window.confirm("Reset money, upgrades, and duel record?")) {
+      return;
+    }
+
+    clearSavedProgression();
+    this.progression = createDefaultProgression();
+    saveProgression(this.progression);
+    this.playerStats = derivePlayerStats(this.progression.ownedUpgrades);
+    this.selectedEnemy = getEnemyById(this.progression.selectedEnemyId);
+    this.boardMode = "bounties";
+    this.lastMoneyEarned = 0;
+    this.lastShopMessage = "Progress reset.";
+    this.updateEnemyVisual();
+    this.updateHitZoneScale();
+    this.updateHitBoxVisibility();
+    this.renderBountyBoard();
+    this.updateOverlay();
   }
 
   private showPlayerMuzzleFlash(): void {
@@ -478,6 +634,7 @@ export class Game {
     this.updateFlash(this.muzzleFlash, this.lastPlayerShotAt, now);
     this.updateFlash(this.enemyMuzzleFlash, this.lastEnemyShotAt, now);
     this.updateMissDust(now);
+    this.updateHitBoxVisibility();
   }
 
   private updateCamera(now: number): void {
@@ -870,6 +1027,7 @@ export class Game {
       this.hitZoneByMesh.set(mesh, definition);
     }
 
+    this.updateHitZoneScale();
     this.updateHitBoxVisibility();
   }
 
@@ -904,19 +1062,37 @@ export class Game {
   }
 
   private updateHitBoxVisibility(): void {
+    const isEagleEyeActive = this.isEagleEyeHighlightActive();
+
     for (const mesh of this.hitZoneMeshes) {
       const material = mesh.material;
+      const opacity = this.hitBoxesVisible ? 0.68 : isEagleEyeActive ? 0.28 : 0;
 
       if (Array.isArray(material)) {
         for (const item of material) {
-          item.opacity = this.hitBoxesVisible ? 0.68 : 0;
+          item.opacity = opacity;
         }
       } else {
-        material.opacity = this.hitBoxesVisible ? 0.68 : 0;
+        material.opacity = opacity;
       }
     }
 
     this.ui.overlay.classList.toggle("is-hitbox-debug", this.hitBoxesVisible);
+  }
+
+  private updateHitZoneScale(): void {
+    for (const mesh of this.hitZoneMeshes) {
+      mesh.scale.setScalar(this.playerStats.hitZoneScale);
+    }
+  }
+
+  private isEagleEyeHighlightActive(): boolean {
+    if (this.playerStats.hitZoneHighlightMs <= 0 || this.state.phase !== "draw") {
+      return false;
+    }
+
+    const drawAt = this.state.stats.drawAt ?? this.state.scheduledDrawAt;
+    return performance.now() - drawAt <= this.playerStats.hitZoneHighlightMs;
   }
 
   private addMissDust(): void {
@@ -1068,12 +1244,34 @@ export class Game {
     heading.className = "bounty-heading";
 
     const title = document.createElement("h1");
-    title.textContent = "Bounty Board";
+    title.textContent = this.boardMode === "shop" ? "Upgrade Shop" : "Bounty Board";
 
     const copy = document.createElement("p");
-    copy.textContent = "Choose a duel. Faster enemies pay better, but their tells are meaner.";
+    copy.textContent =
+      this.boardMode === "shop"
+        ? "Buy small edges. None of them replace a clean draw and a steady aim."
+        : "Choose a duel. Faster enemies pay better, but their tells are meaner.";
 
-    heading.append(title, copy);
+    const boardActions = document.createElement("div");
+    boardActions.className = "board-actions";
+
+    const bountyButton = this.createBoardModeButton("Bounties", "bounties");
+    const shopButton = this.createBoardModeButton("Shop", "shop");
+    const resetButton = document.createElement("button");
+    resetButton.className = "board-reset";
+    resetButton.type = "button";
+    resetButton.textContent = "Reset Progress";
+    resetButton.addEventListener("click", () => this.resetProgression());
+
+    boardActions.append(bountyButton, shopButton, resetButton);
+    heading.append(title, copy, boardActions);
+
+    const progressSummary = this.createProgressSummary();
+
+    if (this.boardMode === "shop") {
+      this.ui.bountyBoard.append(heading, progressSummary, this.createShopList());
+      return;
+    }
 
     const list = document.createElement("div");
     list.className = "bounty-list";
@@ -1094,7 +1292,7 @@ export class Game {
 
       const meta = document.createElement("span");
       meta.className = "bounty-meta";
-      meta.textContent = `${enemy.difficultyHint} - $${enemy.reward}`;
+      meta.textContent = `${enemy.difficultyHint} - reward $${enemy.reward}`;
 
       const description = document.createElement("p");
       description.textContent = enemy.description;
@@ -1106,10 +1304,118 @@ export class Game {
       list.append(card);
     }
 
-    this.ui.bountyBoard.append(heading, list);
+    this.ui.bountyBoard.append(heading, progressSummary, list);
+  }
+
+  private createBoardModeButton(label: string, mode: BoardMode): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.className = "board-tab";
+    button.type = "button";
+    button.textContent = label;
+    button.disabled = this.boardMode === mode;
+    button.addEventListener("click", () => {
+      this.boardMode = mode;
+      this.lastShopMessage = "";
+      this.renderBountyBoard();
+      this.updateOverlay();
+    });
+
+    return button;
+  }
+
+  private createProgressSummary(): HTMLDivElement {
+    const summary = document.createElement("div");
+    summary.className = "progress-summary";
+
+    const money = this.createProgressCard("Money", `$${this.progression.money}`);
+    const record = this.createProgressCard(
+      "Record",
+      `${this.progression.duelsWon}W - ${this.progression.duelsLost}L`
+    );
+    const ownedNames = getOwnedUpgradeNames(this.progression.ownedUpgrades);
+    const owned = this.createProgressCard(
+      "Owned Upgrades",
+      ownedNames.length > 0 ? ownedNames.join(", ") : "None"
+    );
+    owned.classList.add("owned-upgrades");
+
+    summary.append(money, record, owned);
+
+    if (this.lastShopMessage) {
+      const message = document.createElement("div");
+      message.className = "shop-message";
+      message.textContent = this.lastShopMessage;
+      summary.append(message);
+    }
+
+    return summary;
+  }
+
+  private createProgressCard(label: string, value: string): HTMLDivElement {
+    const card = document.createElement("div");
+    card.className = "progress-card";
+
+    const labelEl = document.createElement("span");
+    labelEl.textContent = label;
+
+    const valueEl = document.createElement("strong");
+    valueEl.textContent = value;
+
+    card.append(labelEl, valueEl);
+    return card;
+  }
+
+  private createShopList(): HTMLDivElement {
+    const list = document.createElement("div");
+    list.className = "shop-list";
+
+    for (const upgrade of UPGRADES) {
+      list.append(this.createUpgradeCard(upgrade));
+    }
+
+    return list;
+  }
+
+  private createUpgradeCard(upgrade: UpgradeDefinition): HTMLButtonElement {
+    const owned = this.progression.ownedUpgrades.includes(upgrade.id);
+    const canAfford = this.progression.money >= upgrade.cost;
+    const card = document.createElement("button");
+    card.className = "upgrade-card";
+    card.type = "button";
+    card.dataset.upgradeId = upgrade.id;
+    card.disabled = owned || !canAfford;
+    card.addEventListener("click", () => this.buyUpgrade(upgrade.id));
+
+    if (owned) {
+      card.classList.add("is-owned");
+    } else if (!canAfford) {
+      card.classList.add("is-locked");
+    }
+
+    const name = document.createElement("strong");
+    name.textContent = upgrade.name;
+
+    const cost = document.createElement("span");
+    cost.className = "upgrade-cost";
+    cost.textContent = owned ? "Owned" : `$${upgrade.cost}`;
+
+    const description = document.createElement("p");
+    description.textContent = upgrade.description;
+
+    const effect = document.createElement("small");
+    effect.className = "upgrade-effect";
+    effect.textContent = upgrade.effectSummary;
+
+    const status = document.createElement("span");
+    status.className = "upgrade-status";
+    status.textContent = owned ? "Installed" : canAfford ? "Buy" : "Need more money";
+
+    card.append(name, cost, description, effect, status);
+    return card;
   }
 
   private updateOverlay(): void {
+    this.settleDuelResultIfNeeded();
     const isBoard = this.state.phase === "intro";
 
     this.ui.enemyName.textContent = this.getEnemyBadgeText();
@@ -1223,6 +1529,40 @@ export class Game {
     return `Reason: ${this.state.result.reason}.`;
   }
 
+  private getUpgradeHelpText(): string {
+    if (!this.state.result) {
+      return "";
+    }
+
+    if (this.lastLuckyCharmTriggered) {
+      return "Lucky Charm saved a near loss.";
+    }
+
+    const parts: string[] = [];
+    const shotResult = this.state.result.stats.shotResult;
+    const playerShotResolved =
+      shotResult === "torso" || shotResult === "head" || shotResult === "disarm";
+
+    if (playerShotResolved && this.playerStats.shotTimingBonusMs > 0) {
+      parts.push(`shot -${Math.round(this.playerStats.shotTimingBonusMs)} ms`);
+    }
+
+    if (playerShotResolved && this.playerStats.focusGraceMs > 0) {
+      parts.push(`focus +${Math.round(this.playerStats.focusGraceMs)} ms`);
+    }
+
+    if (playerShotResolved && this.playerStats.hitZoneScale > 1) {
+      const bonus = Math.round((this.playerStats.hitZoneScale - 1) * 100);
+      parts.push(`aim +${bonus}%`);
+    }
+
+    if (this.playerStats.hitZoneHighlightMs > 0) {
+      parts.push("Eagle Eye highlight");
+    }
+
+    return parts.join(", ");
+  }
+
   private renderStats(): void {
     this.ui.stats.replaceChildren();
 
@@ -1231,24 +1571,30 @@ export class Game {
     }
 
     const stats = this.state.result.stats;
-    const reward = this.state.result.outcome === "win" ? `$${this.selectedEnemy.reward}` : "$0";
     const rows: Array<[string, string]> = [
       ["Duel Result", this.state.result.outcome.toUpperCase()],
       ["Shot Result", formatShotResult(stats.shotResult)],
       ["Reaction Time", formatDuration(stats.playerReactionTimeMs)],
       ["Enemy Reaction", formatDuration(stats.enemyReactionTimeMs)],
-      ["Reward", reward]
+      ["Money Earned", `$${this.lastMoneyEarned}`],
+      ["Money", `$${this.progression.money}`]
     ];
 
     if (stats.styleBonusText) {
       rows.push(["Style Bonus", stats.styleBonusText]);
     }
 
+    const upgradeHelp = this.getUpgradeHelpText();
+
+    if (upgradeHelp) {
+      rows.push(["Upgrade Help", upgradeHelp]);
+    }
+
     for (const [label, value] of rows) {
       const row = document.createElement("div");
       row.className = "stat-row";
 
-      if (label === "Style Bonus") {
+      if (label === "Style Bonus" || label === "Upgrade Help") {
         row.classList.add("is-wide");
       }
 
@@ -1266,4 +1612,12 @@ export class Game {
 
 function randomRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
+}
+
+function getEnemyById(enemyId: string): EnemyDefinition {
+  return ENEMIES.find((enemy) => enemy.id === enemyId) ?? DEFAULT_ENEMY;
+}
+
+function appendResultText(currentText: string | undefined, nextText: string): string {
+  return currentText ? `${currentText} ${nextText}` : nextText;
 }
