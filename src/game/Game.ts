@@ -1532,67 +1532,15 @@ export class Game {
   private createEnemyPortrait(enemy: EnemyDefinition): HTMLSpanElement {
     const portrait = document.createElement("span");
     portrait.className = "poster-portrait";
-    portrait.dataset.hat = enemy.portrait.hatType;
-    portrait.dataset.body = enemy.portrait.bodyShape;
-    portrait.dataset.face = enemy.portrait.faceShape;
-    portrait.style.setProperty("--portrait-ink", enemy.portrait.palette.ink);
-    portrait.style.setProperty("--portrait-shadow", enemy.portrait.palette.shadow);
-    portrait.style.setProperty("--portrait-accent", enemy.portrait.palette.accent);
-    portrait.style.setProperty("--portrait-hat", enemy.portrait.palette.hat);
-    portrait.style.setProperty("--portrait-coat", enemy.portrait.palette.coat);
-    portrait.style.setProperty("--portrait-skin", enemy.portrait.palette.skin);
 
-    const halo = document.createElement("span");
-    halo.className = "portrait-halo";
+    const image = document.createElement("img");
+    image.className = "poster-portrait-image";
+    image.src = enemy.portrait.imageUrl;
+    image.alt = `${enemy.name} portrait`;
+    image.decoding = "async";
+    image.loading = "eager";
 
-    const body = document.createElement("span");
-    body.className = "portrait-body";
-
-    const coat = document.createElement("span");
-    coat.className = "portrait-coat";
-    coat.hidden = !enemy.portrait.hasCoat;
-
-    const poncho = document.createElement("span");
-    poncho.className = "portrait-poncho";
-    poncho.hidden = !enemy.portrait.hasPoncho;
-
-    const neck = document.createElement("span");
-    neck.className = "portrait-neck";
-
-    const face = document.createElement("span");
-    face.className = "portrait-face";
-
-    const eyes = document.createElement("span");
-    eyes.className = "portrait-eyes";
-
-    const bandana = document.createElement("span");
-    bandana.className = "portrait-bandana";
-    bandana.hidden = !enemy.portrait.hasBandana;
-
-    const scar = document.createElement("span");
-    scar.className = "portrait-scar";
-    scar.hidden = !enemy.portrait.hasScar;
-
-    const eyePatch = document.createElement("span");
-    eyePatch.className = "portrait-eye-patch";
-    eyePatch.hidden = !enemy.portrait.hasEyePatch;
-
-    const hat = document.createElement("span");
-    hat.className = "portrait-hat";
-
-    portrait.append(
-      halo,
-      body,
-      coat,
-      poncho,
-      neck,
-      face,
-      eyes,
-      bandana,
-      scar,
-      eyePatch,
-      hat
-    );
+    portrait.append(image);
     return portrait;
   }
 

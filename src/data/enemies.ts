@@ -1,9 +1,6 @@
 import type { ShotResult } from "../game/scoring";
 
 export type EnemyDifficulty = "Tutorial" | "Moderate" | "Hard" | "Expert" | "Boss";
-export type PortraitHatType = "oversized" | "narrow" | "marshal" | "wide" | "black";
-export type PortraitBodyShape = "small" | "thin" | "tall" | "poncho" | "broad";
-export type PortraitFaceShape = "round" | "long" | "square" | "sharp" | "shadow";
 
 export interface EnemyPortraitPalette {
   paperTint: string;
@@ -16,14 +13,7 @@ export interface EnemyPortraitPalette {
 }
 
 export interface EnemyPortraitConfig {
-  hatType: PortraitHatType;
-  bodyShape: PortraitBodyShape;
-  faceShape: PortraitFaceShape;
-  hasCoat: boolean;
-  hasPoncho: boolean;
-  hasBandana: boolean;
-  hasScar: boolean;
-  hasEyePatch: boolean;
+  imageUrl: string;
   boardRotationDeg: number;
   boardOffsetY: number;
   palette: EnemyPortraitPalette;
@@ -76,14 +66,7 @@ export const ENEMIES = [
       drawLeanDistance: 0
     },
     portrait: {
-      hatType: "oversized",
-      bodyShape: "small",
-      faceShape: "round",
-      hasCoat: true,
-      hasPoncho: false,
-      hasBandana: false,
-      hasScar: false,
-      hasEyePatch: false,
+      imageUrl: "/bounties/billy-the-shaky.webp",
       boardRotationDeg: -2.5,
       boardOffsetY: 10,
       palette: {
@@ -118,14 +101,7 @@ export const ENEMIES = [
       drawLeanDistance: 0
     },
     portrait: {
-      hatType: "narrow",
-      bodyShape: "thin",
-      faceShape: "long",
-      hasCoat: true,
-      hasPoncho: false,
-      hasBandana: true,
-      hasScar: true,
-      hasEyePatch: false,
+      imageUrl: "/bounties/red-eye-ramos.webp",
       boardRotationDeg: 1.7,
       boardOffsetY: -4,
       palette: {
@@ -160,14 +136,7 @@ export const ENEMIES = [
       drawLeanDistance: 0
     },
     portrait: {
-      hatType: "marshal",
-      bodyShape: "tall",
-      faceShape: "square",
-      hasCoat: true,
-      hasPoncho: false,
-      hasBandana: false,
-      hasScar: false,
-      hasEyePatch: false,
+      imageUrl: "/bounties/marshal-graves.webp",
       boardRotationDeg: -0.8,
       boardOffsetY: 2,
       palette: {
@@ -202,14 +171,7 @@ export const ENEMIES = [
       drawLeanDistance: -0.34
     },
     portrait: {
-      hatType: "wide",
-      bodyShape: "poncho",
-      faceShape: "sharp",
-      hasCoat: false,
-      hasPoncho: true,
-      hasBandana: false,
-      hasScar: true,
-      hasEyePatch: false,
+      imageUrl: "/bounties/dust-widow.webp",
       boardRotationDeg: 2.4,
       boardOffsetY: 8,
       palette: {
@@ -244,14 +206,7 @@ export const ENEMIES = [
       drawLeanDistance: 0.12
     },
     portrait: {
-      hatType: "black",
-      bodyShape: "broad",
-      faceShape: "shadow",
-      hasCoat: true,
-      hasPoncho: false,
-      hasBandana: true,
-      hasScar: false,
-      hasEyePatch: true,
+      imageUrl: "/bounties/the-black-hat.webp",
       boardRotationDeg: -1.4,
       boardOffsetY: -8,
       palette: {
