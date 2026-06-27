@@ -1469,37 +1469,131 @@ export class Game {
     list.className = "bounty-list";
 
     for (const enemy of ENEMIES) {
-      const card = document.createElement("button");
-      card.className = "bounty-card";
-      card.type = "button";
-      card.dataset.enemyId = enemy.id;
-      card.addEventListener("click", () => {
-        this.audio.playSfx("posterPaper");
-        this.selectEnemy(enemy);
-      });
-
-      const name = document.createElement("strong");
-      name.textContent = enemy.name;
-
-      const titleEl = document.createElement("span");
-      titleEl.className = "bounty-title";
-      titleEl.textContent = enemy.title;
-
-      const meta = document.createElement("span");
-      meta.className = "bounty-meta";
-      meta.textContent = `${enemy.difficultyHint} - reward $${enemy.reward}`;
-
-      const description = document.createElement("p");
-      description.textContent = enemy.description;
-
-      const tell = document.createElement("small");
-      tell.textContent = enemy.preferredTell;
-
-      card.append(name, titleEl, meta, description, tell);
-      list.append(card);
+      list.append(this.createBountyPoster(enemy));
     }
 
     this.ui.bountyBoard.append(heading, progressSummary, list);
+  }
+
+  private createBountyPoster(enemy: EnemyDefinition): HTMLButtonElement {
+    const card = document.createElement("button");
+    card.className = "bounty-card";
+    card.type = "button";
+    card.dataset.enemyId = enemy.id;
+    card.style.setProperty("--poster-rotate", `${enemy.portrait.boardRotationDeg}deg`);
+    card.style.setProperty("--poster-offset-y", `${enemy.portrait.boardOffsetY}px`);
+    card.style.setProperty("--poster-paper", enemy.portrait.palette.paperTint);
+    card.style.setProperty("--poster-ink", enemy.portrait.palette.ink);
+    card.style.setProperty("--poster-shadow", enemy.portrait.palette.shadow);
+    card.style.setProperty("--poster-accent", enemy.portrait.palette.accent);
+    card.classList.toggle("is-selected", enemy.id === this.selectedEnemy.id);
+    card.setAttribute(
+      "aria-label",
+      `Wanted poster for ${enemy.name}, ${enemy.title}, reward $${enemy.reward}`
+    );
+    card.addEventListener("click", () => {
+      this.audio.playSfx("posterPaper");
+      this.selectEnemy(enemy);
+    });
+
+    const pin = document.createElement("span");
+    pin.className = "poster-pin";
+
+    const wanted = document.createElement("span");
+    wanted.className = "poster-wanted";
+    wanted.textContent = "WANTED";
+
+    const portrait = this.createEnemyPortrait(enemy);
+
+    const name = document.createElement("strong");
+    name.className = "poster-name";
+    name.textContent = enemy.name;
+
+    const titleEl = document.createElement("span");
+    titleEl.className = "bounty-title";
+    titleEl.textContent = enemy.title;
+
+    const meta = document.createElement("span");
+    meta.className = "bounty-meta";
+    meta.textContent = `${enemy.difficultyHint} - reward $${enemy.reward}`;
+
+    const description = document.createElement("p");
+    description.className = "poster-description";
+    description.textContent = enemy.description;
+
+    const tell = document.createElement("small");
+    tell.className = "poster-tell";
+    tell.textContent = enemy.preferredTell;
+
+    card.append(pin, wanted, portrait, name, titleEl, meta, description, tell);
+    return card;
+  }
+
+  private createEnemyPortrait(enemy: EnemyDefinition): HTMLSpanElement {
+    const portrait = document.createElement("span");
+    portrait.className = "poster-portrait";
+    portrait.dataset.hat = enemy.portrait.hatType;
+    portrait.dataset.body = enemy.portrait.bodyShape;
+    portrait.dataset.face = enemy.portrait.faceShape;
+    portrait.style.setProperty("--portrait-ink", enemy.portrait.palette.ink);
+    portrait.style.setProperty("--portrait-shadow", enemy.portrait.palette.shadow);
+    portrait.style.setProperty("--portrait-accent", enemy.portrait.palette.accent);
+    portrait.style.setProperty("--portrait-hat", enemy.portrait.palette.hat);
+    portrait.style.setProperty("--portrait-coat", enemy.portrait.palette.coat);
+    portrait.style.setProperty("--portrait-skin", enemy.portrait.palette.skin);
+
+    const halo = document.createElement("span");
+    halo.className = "portrait-halo";
+
+    const body = document.createElement("span");
+    body.className = "portrait-body";
+
+    const coat = document.createElement("span");
+    coat.className = "portrait-coat";
+    coat.hidden = !enemy.portrait.hasCoat;
+
+    const poncho = document.createElement("span");
+    poncho.className = "portrait-poncho";
+    poncho.hidden = !enemy.portrait.hasPoncho;
+
+    const neck = document.createElement("span");
+    neck.className = "portrait-neck";
+
+    const face = document.createElement("span");
+    face.className = "portrait-face";
+
+    const eyes = document.createElement("span");
+    eyes.className = "portrait-eyes";
+
+    const bandana = document.createElement("span");
+    bandana.className = "portrait-bandana";
+    bandana.hidden = !enemy.portrait.hasBandana;
+
+    const scar = document.createElement("span");
+    scar.className = "portrait-scar";
+    scar.hidden = !enemy.portrait.hasScar;
+
+    const eyePatch = document.createElement("span");
+    eyePatch.className = "portrait-eye-patch";
+    eyePatch.hidden = !enemy.portrait.hasEyePatch;
+
+    const hat = document.createElement("span");
+    hat.className = "portrait-hat";
+
+    portrait.append(
+      halo,
+      body,
+      coat,
+      poncho,
+      neck,
+      face,
+      eyes,
+      bandana,
+      scar,
+      eyePatch,
+      hat
+    );
+    return portrait;
   }
 
   private createBoardModeButton(label: string, mode: BoardMode): HTMLButtonElement {

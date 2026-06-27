@@ -1,6 +1,33 @@
 import type { ShotResult } from "../game/scoring";
 
 export type EnemyDifficulty = "Tutorial" | "Moderate" | "Hard" | "Expert" | "Boss";
+export type PortraitHatType = "oversized" | "narrow" | "marshal" | "wide" | "black";
+export type PortraitBodyShape = "small" | "thin" | "tall" | "poncho" | "broad";
+export type PortraitFaceShape = "round" | "long" | "square" | "sharp" | "shadow";
+
+export interface EnemyPortraitPalette {
+  paperTint: string;
+  ink: string;
+  shadow: string;
+  accent: string;
+  hat: string;
+  coat: string;
+  skin: string;
+}
+
+export interface EnemyPortraitConfig {
+  hatType: PortraitHatType;
+  bodyShape: PortraitBodyShape;
+  faceShape: PortraitFaceShape;
+  hasCoat: boolean;
+  hasPoncho: boolean;
+  hasBandana: boolean;
+  hasScar: boolean;
+  hasEyePatch: boolean;
+  boardRotationDeg: number;
+  boardOffsetY: number;
+  palette: EnemyPortraitPalette;
+}
 
 export interface EnemyVisualConfig {
   coatColor: string;
@@ -24,6 +51,7 @@ export interface EnemyDefinition {
   preferredTell: string;
   weakZones: readonly ShotResult[];
   visual: EnemyVisualConfig;
+  portrait: EnemyPortraitConfig;
 }
 
 export const ENEMIES = [
@@ -46,6 +74,27 @@ export const ENEMIES = [
       skinColor: "#bd8558",
       scale: 0.95,
       drawLeanDistance: 0
+    },
+    portrait: {
+      hatType: "oversized",
+      bodyShape: "small",
+      faceShape: "round",
+      hasCoat: true,
+      hasPoncho: false,
+      hasBandana: false,
+      hasScar: false,
+      hasEyePatch: false,
+      boardRotationDeg: -2.5,
+      boardOffsetY: 10,
+      palette: {
+        paperTint: "#efd59f",
+        ink: "#3b2416",
+        shadow: "#715033",
+        accent: "#b36f2f",
+        hat: "#7c532e",
+        coat: "#7a5b38",
+        skin: "#bd8558"
+      }
     }
   },
   {
@@ -67,6 +116,27 @@ export const ENEMIES = [
       skinColor: "#a96d4b",
       scale: 1,
       drawLeanDistance: 0
+    },
+    portrait: {
+      hatType: "narrow",
+      bodyShape: "thin",
+      faceShape: "long",
+      hasCoat: true,
+      hasPoncho: false,
+      hasBandana: true,
+      hasScar: true,
+      hasEyePatch: false,
+      boardRotationDeg: 1.7,
+      boardOffsetY: -4,
+      palette: {
+        paperTint: "#e8c58c",
+        ink: "#351b16",
+        shadow: "#74332c",
+        accent: "#9d2f28",
+        hat: "#35231d",
+        coat: "#8e342f",
+        skin: "#a96d4b"
+      }
     }
   },
   {
@@ -88,6 +158,27 @@ export const ENEMIES = [
       skinColor: "#b77b52",
       scale: 1.03,
       drawLeanDistance: 0
+    },
+    portrait: {
+      hatType: "marshal",
+      bodyShape: "tall",
+      faceShape: "square",
+      hasCoat: true,
+      hasPoncho: false,
+      hasBandana: false,
+      hasScar: false,
+      hasEyePatch: false,
+      boardRotationDeg: -0.8,
+      boardOffsetY: 2,
+      palette: {
+        paperTint: "#ead09a",
+        ink: "#253039",
+        shadow: "#566777",
+        accent: "#b08a45",
+        hat: "#1f2427",
+        coat: "#2f3d46",
+        skin: "#b77b52"
+      }
     }
   },
   {
@@ -109,6 +200,27 @@ export const ENEMIES = [
       skinColor: "#9f6c52",
       scale: 0.98,
       drawLeanDistance: -0.34
+    },
+    portrait: {
+      hatType: "wide",
+      bodyShape: "poncho",
+      faceShape: "sharp",
+      hasCoat: false,
+      hasPoncho: true,
+      hasBandana: false,
+      hasScar: true,
+      hasEyePatch: false,
+      boardRotationDeg: 2.4,
+      boardOffsetY: 8,
+      palette: {
+        paperTint: "#e5bf84",
+        ink: "#232131",
+        shadow: "#464d70",
+        accent: "#7a4154",
+        hat: "#1d1b25",
+        coat: "#3f4563",
+        skin: "#9f6c52"
+      }
     }
   },
   {
@@ -130,6 +242,27 @@ export const ENEMIES = [
       skinColor: "#9b6847",
       scale: 1.07,
       drawLeanDistance: 0.12
+    },
+    portrait: {
+      hatType: "black",
+      bodyShape: "broad",
+      faceShape: "shadow",
+      hasCoat: true,
+      hasPoncho: false,
+      hasBandana: true,
+      hasScar: false,
+      hasEyePatch: true,
+      boardRotationDeg: -1.4,
+      boardOffsetY: -8,
+      palette: {
+        paperTint: "#d8ad72",
+        ink: "#130f0d",
+        shadow: "#28201b",
+        accent: "#a33b31",
+        hat: "#0d0c0b",
+        coat: "#171514",
+        skin: "#9b6847"
+      }
     }
   }
 ] as const satisfies readonly EnemyDefinition[];
