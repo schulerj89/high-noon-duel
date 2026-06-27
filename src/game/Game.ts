@@ -29,6 +29,10 @@ import {
   type DuelModifierDefinition
 } from "../data/duelModifiers";
 import {
+  getPracticeMode,
+  type PracticeModeDefinition
+} from "../data/practiceModes";
+import {
   CONDITIONS,
   type ConditionDefinition,
   type ConditionId
@@ -114,6 +118,23 @@ import {
 } from "./state";
 import type { DrawAnimationStyle } from "./tells";
 import { createTownSelector } from "../ui/townSelector";
+import { createPracticeMenu } from "../ui/practiceMenu";
+import {
+  ACCURACY_DRILL_DURATION_MS,
+  ACCURACY_DRILL_MAX_SHOTS,
+  ACCURACY_TARGET_SPECS,
+  getPracticeBestSummary,
+  loadPracticeBests,
+  recordPracticeBest,
+  savePracticeBests,
+  scoreAccuracyDrill,
+  scoreDisarmDrill,
+  scoreFakeoutDrill,
+  scoreReactionDrill,
+  type PracticeBests,
+  type PracticeResult,
+  type PracticeTargetSpec
+} from "./practice";
 
 interface UiElements {
   overlay: HTMLDivElement;
@@ -150,8 +171,21 @@ interface VolumeControlElements {
 }
 
 type Vec3Tuple = [number, number, number];
-type BoardMode = "bounties" | "shop";
+type BoardMode = "bounties" | "shop" | "practice";
 type DuelLossReason = "enemy was faster" | "missed shot";
+
+interface PracticeSession {
+  mode: PracticeModeDefinition;
+  phase: "countdown" | "active" | "resolved";
+  startedAt: number;
+  drawAt?: number;
+  result?: PracticeResult;
+  hits: number;
+  misses: number;
+  shots: number;
+  targetPoints: number;
+  endsAt?: number;
+}
 
 interface PlayerShotTiming {
   beatsEnemy: boolean;
@@ -195,11 +229,15 @@ export class Game {
   private readonly pointer = new THREE.Vector2(0, 0);
   private readonly hitZoneMeshes: THREE.Mesh[] = [];
   private readonly hitZoneByMesh = new Map<THREE.Object3D, HitZoneDefinition>();
+  private readonly practiceTargetMeshes: THREE.Mesh[] = [];
+  private readonly practiceTargetByMesh = new Map<THREE.Object3D, PracticeTargetSpec>();
   private readonly audio = new AudioManager();
   private readonly ui: UiElements;
   private readonly devPanel: DevPanel | null;
 
   private progression: PlayerProgression = loadProgression();
+  private practiceBests: PracticeBests = loadPracticeBests();
+  private practiceSession: PracticeSession | null = null;
   private tuning: TuningOverrides = loadTuningOverrides();
   private telemetry: PlaytestTelemetry = loadTelemetry();
   private playerStats: PlayerStats = this.createPlayerStats();
@@ -327,6 +365,7 @@ export class Game {
     this.clearQueuedSubtitles();
     this.resizeObserver?.disconnect();
     this.audio.stopAll();
+    this.clearPracticeTargets();
 
     this.scene.traverse((object) => {
       if (object instanceof THREE.Mesh) {
@@ -363,6 +402,17 @@ export class Game {
     }
 
     this.handleDuelPhaseAudio(previousPhase, this.state.phase);
+
+    if (this.practiceSession) {
+      this.handlePracticePhaseAdvance(previousPhase, this.state.phase);
+      this.handlePracticeTimeout(now);
+      this.updateScene(visualNow, visualDelta);
+      this.updateOverlay(now);
+      this.renderer.render(this.scene, this.camera);
+      this.animationFrameId = window.requestAnimationFrame(this.tick);
+      return;
+    }
+
     this.handleEnemyShot(now);
     this.updateScene(visualNow, visualDelta);
     this.updateOverlay(now);
@@ -425,6 +475,10 @@ export class Game {
 
   private readonly showBountyBoard = (): void => {
     this.boardMode = "bounties";
+    this.practiceSession = null;
+    this.clearPracticeTargets();
+    this.selectedEnemy = getEnemyById(this.selectedContract.enemyId);
+    this.selectedModifier = getDuelModifier(this.selectedContract.modifierId);
     this.state = createIntroDuelState(performance.now());
     this.enemyFireAt = null;
     this.missLossAt = null;
@@ -443,13 +497,46 @@ export class Game {
 
     if (this.enemyRig) {
       resetEnemyRigPose(this.enemyRig);
+      this.enemyRig.root.visible = true;
     }
 
+    this.rebuildEnemy();
     this.updateEnemyVisual();
     this.renderBountyBoard();
     this.playBountyBoardAudio();
     this.updateOverlay(performance.now());
   };
+
+  private showPracticeMenu(): void {
+    this.boardMode = "practice";
+    this.practiceSession = null;
+    this.clearPracticeTargets();
+    this.selectedEnemy = getEnemyById(this.selectedContract.enemyId);
+    this.selectedModifier = getDuelModifier(this.selectedContract.modifierId);
+    this.state = createIntroDuelState(performance.now());
+    this.enemyFireAt = null;
+    this.missLossAt = null;
+    this.behaviorTimeline = createEmptyBehaviorTimeline(
+      getEnemyBehavior(this.selectedEnemy.id),
+      performance.now()
+    );
+    this.spokenBehaviorEventIds.clear();
+    this.enemyHasFired = false;
+    this.lastPlayerShotAt = null;
+    this.lastEnemyShotAt = null;
+    this.lastMissAt = null;
+    this.hitPauseStartedAt = null;
+    this.hitPauseUntil = 0;
+    this.clearQueuedSubtitles();
+    this.clearSubtitle();
+    this.rebuildEnemy();
+    if (this.enemyRig) {
+      this.enemyRig.root.visible = true;
+    }
+    this.renderBountyBoard();
+    this.playBountyBoardAudio();
+    this.updateOverlay(performance.now());
+  }
 
   private selectBountyContract(contract: BountyContractDefinition): void {
     if (contract.isLocked) {
@@ -500,6 +587,94 @@ export class Game {
     this.applyCurrentEnvironment();
     this.renderBountyBoard();
     this.updateOverlay();
+  }
+
+  private startPracticeMode(mode: PracticeModeDefinition): void {
+    const now = performance.now();
+    this.audio.unlock();
+    this.audio.playSfx("buttonClick");
+    this.boardMode = "practice";
+    this.clearQueuedSubtitles();
+    this.clearSubtitle();
+    this.clearPracticeTargets();
+    this.lastPlayerShotAt = null;
+    this.lastEnemyShotAt = null;
+    this.lastMissAt = null;
+    this.hitPauseStartedAt = null;
+    this.hitPauseUntil = 0;
+    this.rewardToastText = "";
+    this.rewardToastUntil = 0;
+    this.enemyHasFired = false;
+    this.duelSettled = false;
+    this.selectedModifier = getDuelModifier("high-noon");
+
+    if (mode.id === "fakeout-drill") {
+      this.selectedEnemy = getEnemyById("red-eye-ramos");
+      this.rebuildEnemy();
+      if (this.enemyRig) {
+        this.enemyRig.root.visible = true;
+      }
+    } else if (mode.id === "disarm-drill") {
+      this.selectedEnemy = getEnemyById("red-eye-ramos");
+      this.rebuildEnemy();
+      if (this.enemyRig) {
+        this.enemyRig.root.visible = true;
+      }
+    } else {
+      if (this.enemyRig) {
+        this.enemyRig.root.visible = false;
+      }
+    }
+
+    this.applyCurrentEnvironment();
+    this.timing = this.createRoundTiming();
+
+    this.practiceSession = {
+      mode,
+      phase: mode.id === "accuracy-drill" ? "active" : "countdown",
+      startedAt: now,
+      drawAt: mode.id === "accuracy-drill" ? now : undefined,
+      hits: 0,
+      misses: 0,
+      shots: 0,
+      targetPoints: 0,
+      endsAt: mode.id === "accuracy-drill" ? now + ACCURACY_DRILL_DURATION_MS : undefined
+    };
+
+    if (mode.id === "accuracy-drill") {
+      this.state = {
+        phase: "draw",
+        roundStartedAt: now,
+        phaseStartedAt: now,
+        scheduledDrawAt: now,
+        stats: {
+          drawAt: now
+        }
+      };
+      this.addPracticeTargets();
+    } else {
+      this.state = startDuel(now, this.timing);
+    }
+
+    if (mode.id === "fakeout-drill") {
+      this.behaviorTimeline = createEnemyBehaviorTimeline({
+        behavior: getEnemyBehavior("red-eye-ramos"),
+        roundStartedAt: now,
+        fakeoutStartsAt: now + this.timing.standoffDurationMs,
+        scheduledDrawAt: this.state.scheduledDrawAt,
+        fakeoutChance: 1
+      });
+    } else {
+      this.behaviorTimeline = createEmptyBehaviorTimeline(
+        getEnemyBehavior(this.selectedEnemy.id),
+        now
+      );
+    }
+
+    this.spokenBehaviorEventIds.clear();
+    this.updateHitZoneScale();
+    this.updateHitBoxVisibility();
+    this.updateOverlay(now);
   }
 
   private createRoundTiming(): CountdownTiming {
@@ -775,12 +950,24 @@ export class Game {
   private readonly handleRestartButtonClick = (): void => {
     this.audio.unlock();
     this.audio.playSfx("buttonClick");
+
+    if (this.practiceSession) {
+      this.startPracticeMode(this.practiceSession.mode);
+      return;
+    }
+
     this.startRound();
   };
 
   private readonly handleBackButtonClick = (): void => {
     this.audio.unlock();
     this.audio.playSfx("buttonClick");
+
+    if (this.practiceSession) {
+      this.showPracticeMenu();
+      return;
+    }
+
     this.showBountyBoard();
   };
 
@@ -863,14 +1050,24 @@ export class Game {
       this.ui.crosshair.style.top = "50%";
 
       if (this.state.phase === "resolved") {
-        this.startRound();
+        if (this.practiceSession) {
+          this.startPracticeMode(this.practiceSession.mode);
+        } else {
+          this.startRound();
+        }
       } else if (this.state.phase === "intro") {
-        this.startRound();
+        if (this.boardMode !== "practice") {
+          this.startRound();
+        }
       }
     }
 
     if (event.code === "KeyR") {
-      this.startRound();
+      if (this.practiceSession) {
+        this.startPracticeMode(this.practiceSession.mode);
+      } else {
+        this.startRound();
+      }
     }
 
     if (event.code === "KeyH") {
@@ -895,6 +1092,11 @@ export class Game {
   }
 
   private handlePlayerInput(): void {
+    if (this.practiceSession) {
+      this.handlePracticeInput();
+      return;
+    }
+
     if (this.state.phase === "intro") {
       return;
     }
@@ -1010,6 +1212,249 @@ export class Game {
       this.enemyReactionMs,
       this.getPlayerShotBehaviorStats(now, "hit")
     );
+
+    this.updateOverlay();
+  }
+
+  private handlePracticeInput(): void {
+    const session = this.practiceSession;
+
+    if (!session || session.phase === "resolved") {
+      return;
+    }
+
+    const now = performance.now();
+    const previousPhase = this.state.phase;
+    this.state = advanceDuelState(this.state, now, this.timing);
+    this.handleDuelPhaseAudio(previousPhase, this.state.phase);
+    this.handlePracticePhaseAdvance(previousPhase, this.state.phase);
+    this.lastPlayerShotAt = now;
+    this.showPlayerMuzzleFlash();
+    this.audio.playSfx("gunshotPlayer");
+
+    if (session.mode.id === "accuracy-drill") {
+      this.handleAccuracyPracticeShot(now);
+      return;
+    }
+
+    if (this.state.phase !== "draw") {
+      this.finalizePracticeResult({
+        modeId: session.mode.id,
+        outcome: "foul",
+        title: "Too Soon",
+        summary: "You fired before the legal DRAW cue.",
+        score: 0,
+        fouls: 1
+      });
+      this.playVoiceWithSubtitle("tooSoon", { durationMs: 1100 });
+      return;
+    }
+
+    const drawAt = this.state.stats.drawAt ?? this.state.scheduledDrawAt;
+    const reactionTimeMs = Math.max(0, now - drawAt);
+
+    if (session.mode.id === "reaction-drill") {
+      this.finalizePracticeResult({
+        modeId: session.mode.id,
+        outcome: "complete",
+        title: "Reaction Logged",
+        summary: `${Math.round(reactionTimeMs)} ms after DRAW.`,
+        score: scoreReactionDrill(reactionTimeMs),
+        reactionTimeMs
+      });
+      return;
+    }
+
+    if (session.mode.id === "fakeout-drill") {
+      const waitedOutFakeout = hasFakeoutStartedBefore(this.behaviorTimeline, now);
+      this.finalizePracticeResult({
+        modeId: session.mode.id,
+        outcome: "complete",
+        title: waitedOutFakeout ? "Held Your Nerve" : "Clean Draw",
+        summary: waitedOutFakeout
+          ? `Ignored the twitch and clicked in ${Math.round(reactionTimeMs)} ms.`
+          : `Clicked in ${Math.round(reactionTimeMs)} ms after the true cue.`,
+        score: scoreFakeoutDrill({ reactionTimeMs, waitedOutFakeout }),
+        reactionTimeMs,
+        targetText: waitedOutFakeout ? "Fakeout ignored" : "No fakeout seen"
+      });
+      return;
+    }
+
+    const hitZone = this.getHitZoneUnderReticle();
+    const shotScore = scoreHitZone(hitZone);
+    const hitDisarm = shotScore.shotResult === "disarm";
+
+    if (hitDisarm) {
+      this.audio.playSfx("bodyHit");
+      this.hitPauseStartedAt = now;
+      this.hitPauseUntil = now + GAME_CONFIG.timing.hitPauseMs;
+    } else {
+      this.showMissDust();
+      this.audio.playSfx("dustImpact");
+    }
+
+    this.finalizePracticeResult({
+      modeId: session.mode.id,
+      outcome: hitDisarm ? "complete" : "failed",
+      title: hitDisarm ? "Clean Disarm" : "Not the Gun Hand",
+      summary: hitDisarm
+        ? `Gun hand hit in ${Math.round(reactionTimeMs)} ms.`
+        : `Shot result: ${formatShotResult(shotScore.shotResult)}.`,
+      score: scoreDisarmDrill({ reactionTimeMs, hitDisarm }),
+      reactionTimeMs,
+      hits: hitDisarm ? 1 : 0,
+      misses: hitDisarm ? 0 : 1,
+      targetText: hitDisarm ? "Disarm" : formatShotResult(shotScore.shotResult)
+    });
+  }
+
+  private handleAccuracyPracticeShot(now: number): void {
+    const session = this.practiceSession;
+
+    if (!session || session.mode.id !== "accuracy-drill") {
+      return;
+    }
+
+    const target = this.getPracticeTargetUnderReticle();
+    session.shots += 1;
+
+    if (target) {
+      const { mesh, spec } = target;
+      mesh.visible = false;
+      session.hits += 1;
+      session.targetPoints += spec.points;
+      this.audio.playSfx("bodyHit");
+      this.hitPauseStartedAt = now;
+      this.hitPauseUntil = now + 60;
+    } else {
+      session.misses += 1;
+      this.lastMissAt = now;
+      this.showMissDust();
+      this.audio.playSfx("dustImpact");
+    }
+
+    this.finishAccuracyPracticeIfDone(now);
+    this.updateOverlay(now);
+  }
+
+  private handlePracticePhaseAdvance(_previousPhase: DuelPhase, nextPhase: DuelPhase): void {
+    const session = this.practiceSession;
+
+    if (!session || session.phase !== "countdown" || nextPhase !== "draw") {
+      return;
+    }
+
+    session.phase = "active";
+    session.drawAt = this.state.stats.drawAt ?? this.state.scheduledDrawAt;
+
+  }
+
+  private handlePracticeTimeout(now: number): void {
+    const session = this.practiceSession;
+
+    if (
+      !session ||
+      session.phase !== "active" ||
+      session.mode.id !== "accuracy-drill" ||
+      session.endsAt === undefined ||
+      now < session.endsAt
+    ) {
+      return;
+    }
+
+    this.finalizeAccuracyPractice(now, "Time");
+  }
+
+  private finishAccuracyPracticeIfDone(now: number): void {
+    const session = this.practiceSession;
+
+    if (!session || session.mode.id !== "accuracy-drill" || session.phase !== "active") {
+      return;
+    }
+
+    if (session.hits >= ACCURACY_TARGET_SPECS.length) {
+      this.finalizeAccuracyPractice(now, "Range Cleared");
+      return;
+    }
+
+    if (session.shots >= ACCURACY_DRILL_MAX_SHOTS) {
+      this.finalizeAccuracyPractice(now, "Shots Spent");
+    }
+  }
+
+  private finalizeAccuracyPractice(now: number, reason: string): void {
+    const session = this.practiceSession;
+
+    if (!session || session.mode.id !== "accuracy-drill") {
+      return;
+    }
+
+    const durationMs = now - session.startedAt;
+    const score = scoreAccuracyDrill({
+      hits: session.hits,
+      misses: session.misses,
+      durationMs,
+      targetPoints: session.targetPoints
+    });
+
+    this.finalizePracticeResult({
+      modeId: session.mode.id,
+      outcome: session.hits > 0 ? "complete" : "failed",
+      title: reason,
+      summary: `${session.hits}/${ACCURACY_TARGET_SPECS.length} targets hit with ${session.misses} misses.`,
+      score,
+      durationMs,
+      hits: session.hits,
+      misses: session.misses,
+      targetText: `${session.shots}/${ACCURACY_DRILL_MAX_SHOTS} shots`
+    });
+  }
+
+  private finalizePracticeResult(result: PracticeResult): void {
+    const session = this.practiceSession;
+
+    if (!session) {
+      return;
+    }
+
+    const mode = getPracticeMode(result.modeId);
+    const bestResult = recordPracticeBest(this.practiceBests, mode, result);
+    this.practiceBests = bestResult.bests;
+    savePracticeBests(this.practiceBests);
+
+    session.phase = "resolved";
+    session.result = {
+      ...result,
+      bestImproved: bestResult.improved
+    };
+    this.state = {
+      ...this.state,
+      phase: "resolved",
+      phaseStartedAt: performance.now()
+    };
+
+    if (result.outcome === "complete") {
+      this.audio.playMusic("victorySting", {
+        loop: false,
+        fadeInMs: 30,
+        restart: true,
+        volume: 0.65
+      });
+      this.showSubtitle({
+        speaker: "Practice",
+        line: bestResult.improved ? "New best." : "Drill complete.",
+        durationMs: 1300,
+        tone: "result"
+      });
+    } else if (result.outcome === "foul") {
+      this.audio.playMusic("defeatSting", {
+        loop: false,
+        fadeInMs: 30,
+        restart: true,
+        volume: 0.55
+      });
+    }
 
     this.updateOverlay();
   }
@@ -1624,6 +2069,21 @@ export class Game {
     return hitZones[0]?.hitZone ?? null;
   }
 
+  private getPracticeTargetUnderReticle(): { mesh: THREE.Mesh; spec: PracticeTargetSpec } | null {
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const visibleTargets = this.practiceTargetMeshes.filter((mesh) => mesh.visible);
+    const hits = this.raycaster.intersectObjects(visibleTargets, false);
+
+    if (hits.length === 0) {
+      return null;
+    }
+
+    const mesh = hits[0].object;
+    const spec = this.practiceTargetByMesh.get(mesh);
+
+    return mesh instanceof THREE.Mesh && spec ? { mesh, spec } : null;
+  }
+
   private showMissDust(): void {
     if (!this.missDustGroup || !this.missDustMaterial) {
       return;
@@ -2158,6 +2618,51 @@ export class Game {
     this.hitZoneByMesh.clear();
   }
 
+  private addPracticeTargets(): void {
+    this.clearPracticeTargets();
+
+    for (const spec of ACCURACY_TARGET_SPECS) {
+      const mesh = this.createPracticeTargetMesh(spec);
+      mesh.position.set(spec.position[0], spec.position[1], spec.position[2]);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.scene.add(mesh);
+      this.practiceTargetMeshes.push(mesh);
+      this.practiceTargetByMesh.set(mesh, spec);
+    }
+  }
+
+  private clearPracticeTargets(): void {
+    for (const mesh of this.practiceTargetMeshes) {
+      this.scene.remove(mesh);
+      mesh.geometry.dispose();
+      this.disposeMaterial(mesh.material);
+    }
+
+    this.practiceTargetMeshes.length = 0;
+    this.practiceTargetByMesh.clear();
+  }
+
+  private createPracticeTargetMesh(spec: PracticeTargetSpec): THREE.Mesh {
+    const material = new THREE.MeshStandardMaterial({
+      color: getPracticeTargetColor(spec.kind),
+      metalness: spec.kind === "can" ? 0.24 : 0,
+      roughness: 0.72
+    });
+
+    if (spec.kind === "bottle") {
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.42, 12), material);
+      mesh.scale.y = 1.08;
+      return mesh;
+    }
+
+    if (spec.kind === "can") {
+      return new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.28, 14), material);
+    }
+
+    return new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.28, 0.08), material);
+  }
+
   private disposeObject(object: THREE.Object3D): void {
     object.traverse((child) => {
       if (child instanceof THREE.Mesh) {
@@ -2559,14 +3064,28 @@ export class Game {
 
     const bountyButton = this.createBoardModeButton("Bounties", "bounties");
     const shopButton = this.createBoardModeButton("Shop", "shop");
+    const practiceButton = this.createBoardModeButton("Practice Range", "practice");
     const resetButton = document.createElement("button");
     resetButton.className = "board-reset";
     resetButton.type = "button";
     resetButton.textContent = "Reset Progress";
     resetButton.addEventListener("click", () => this.resetProgression());
 
-    boardActions.append(bountyButton, shopButton, resetButton);
+    boardActions.append(bountyButton, shopButton, practiceButton, resetButton);
     heading.append(title, copy, boardActions);
+
+    if (this.boardMode === "practice") {
+      title.textContent = "Practice Range";
+      copy.textContent = "Train legal draws, fast reactions, clean aim, and fakeout discipline.";
+      this.ui.bountyBoard.append(
+        heading,
+        createPracticeMenu({
+          bests: this.practiceBests,
+          onSelectMode: (mode) => this.startPracticeMode(mode)
+        })
+      );
+      return;
+    }
 
     const progressSummary = this.createProgressSummary();
     const townSelector = createTownSelector({
@@ -2974,29 +3493,54 @@ export class Game {
 
   private updateOverlay(now = performance.now()): void {
     this.settleDuelResultIfNeeded();
-    const isBoard = this.state.phase === "intro";
+    const practiceResult = this.practiceSession?.result;
+    const isBoard = this.state.phase === "intro" && this.practiceSession === null;
     const isWin = this.state.result?.outcome === "win";
     const isLoss = this.state.result?.outcome === "loss";
     const shotResult = this.state.result?.stats.shotResult;
     const resultText = this.getResultText();
     const rules = this.getDuelRules();
-    const showReticle = this.state.phase === "draw" && rules.showReticle && this.isReticleReady(now);
+    const showReticle =
+      this.state.phase === "draw" &&
+      rules.showReticle &&
+      this.isReticleReady(now) &&
+      this.shouldShowPracticeReticle();
 
     this.ui.enemyName.textContent = this.getEnemyBadgeText();
     this.ui.bountyBoard.hidden = !isBoard;
     this.ui.phaseLabel.hidden = isBoard;
     this.ui.detail.hidden = isBoard;
     this.ui.phaseLabel.textContent = this.getPhaseText();
-    this.ui.phaseLabel.dataset.phase = this.state.result?.outcome ?? this.state.phase;
-    this.ui.detail.dataset.tone = isLoss ? "loss" : isWin ? "win" : "neutral";
+    this.ui.phaseLabel.dataset.phase =
+      practiceResult?.outcome === "foul" || practiceResult?.outcome === "failed"
+        ? "loss"
+        : practiceResult?.outcome === "complete"
+          ? "win"
+          : this.state.result?.outcome ?? this.state.phase;
+    this.ui.detail.dataset.tone =
+      practiceResult?.outcome === "foul" || practiceResult?.outcome === "failed"
+        ? "loss"
+        : practiceResult?.outcome === "complete" || isWin
+          ? "win"
+          : isLoss
+            ? "loss"
+            : "neutral";
     this.ui.detail.textContent = this.getDetailText();
     this.ui.result.textContent = resultText;
     this.ui.result.classList.toggle("is-visible", resultText !== "");
-    this.ui.result.classList.toggle("is-win", isWin);
-    this.ui.result.classList.toggle("is-loss", isLoss);
-    this.ui.result.classList.toggle("is-disarm", shotResult === "disarm");
+    this.ui.result.classList.toggle("is-win", isWin || practiceResult?.outcome === "complete");
+    this.ui.result.classList.toggle(
+      "is-loss",
+      isLoss || practiceResult?.outcome === "foul" || practiceResult?.outcome === "failed"
+    );
+    this.ui.result.classList.toggle(
+      "is-disarm",
+      shotResult === "disarm" || this.practiceSession?.mode.id === "disarm-drill"
+    );
     this.ui.actionButton.hidden = this.state.phase !== "resolved";
+    this.ui.actionButton.textContent = this.practiceSession ? "Restart Drill" : "Restart Duel";
     this.ui.backButton.hidden = this.state.phase !== "resolved";
+    this.ui.backButton.textContent = this.practiceSession ? "Back to Practice" : "Back to Bounty Board";
     this.ui.crosshair.classList.toggle("is-visible", showReticle);
     this.ui.crosshair.classList.toggle("is-hot", showReticle);
     this.viewport.classList.toggle("is-aiming", this.state.phase === "draw");
@@ -3009,12 +3553,35 @@ export class Game {
   }
 
   private getEnemyBadgeText(): string {
+    if (this.practiceSession) {
+      return `Practice Range: ${this.practiceSession.mode.name}`;
+    }
+
+    if (this.boardMode === "practice") {
+      return "Practice Range";
+    }
+
     const rules = this.getDuelRules();
     const prefix = this.selectedContract.isBoss ? "BOSS" : this.selectedTown.name;
     return `${prefix}: ${this.selectedEnemy.name} - ${rules.modifierName} - $${rules.reward}`;
   }
 
   private getPhaseText(): string {
+    if (this.practiceSession?.result) {
+      switch (this.practiceSession.result.outcome) {
+        case "complete":
+          return "DRILL COMPLETE";
+        case "failed":
+          return "TRY AGAIN";
+        case "foul":
+          return "FOUL";
+      }
+    }
+
+    if (this.practiceSession?.mode.id === "accuracy-drill" && this.practiceSession.phase === "active") {
+      return "RANGE";
+    }
+
     if (this.state.result?.outcome === "win") {
       return "WON";
     }
@@ -3044,6 +3611,10 @@ export class Game {
   }
 
   private getDetailText(): string {
+    if (this.practiceSession) {
+      return this.getPracticeDetailText();
+    }
+
     if (this.state.phase === "intro") {
       return `Choose ${this.selectedEnemy.name}.`;
     }
@@ -3069,6 +3640,45 @@ export class Game {
     }
 
     return "";
+  }
+
+  private getPracticeDetailText(): string {
+    const session = this.practiceSession;
+
+    if (!session) {
+      return "";
+    }
+
+    if (session.result) {
+      return session.result.title;
+    }
+
+    if (session.mode.id === "accuracy-drill") {
+      const remainingMs =
+        session.endsAt === undefined ? 0 : Math.max(0, session.endsAt - performance.now());
+      return `${session.hits}/${ACCURACY_TARGET_SPECS.length} targets - ${session.misses} misses - ${Math.ceil(remainingMs / 1000)}s`;
+    }
+
+    if (this.state.phase === "draw") {
+      switch (session.mode.id) {
+        case "reaction-drill":
+          return "Click now.";
+        case "fakeout-drill":
+          return "True draw. Click.";
+        case "disarm-drill":
+          return "Aim for the gun hand.";
+      }
+    }
+
+    return session.mode.goalText;
+  }
+
+  private shouldShowPracticeReticle(): boolean {
+    if (!this.practiceSession) {
+      return true;
+    }
+
+    return this.practiceSession.phase === "active" && this.state.phase === "draw";
   }
 
   private getOutcomeLine(): string {
@@ -3106,6 +3716,10 @@ export class Game {
   }
 
   private getResultText(): string {
+    if (this.practiceSession?.result) {
+      return this.practiceSession.result.summary;
+    }
+
     if (!this.state.result) {
       return "";
     }
@@ -3184,6 +3798,11 @@ export class Game {
 
   private renderStats(): void {
     this.ui.stats.replaceChildren();
+
+    if (this.practiceSession?.result) {
+      this.renderPracticeStats(this.practiceSession.result);
+      return;
+    }
 
     if (this.state.phase !== "resolved" || !this.state.result) {
       return;
@@ -3291,6 +3910,62 @@ export class Game {
       this.ui.stats.append(row);
     }
   }
+
+  private renderPracticeStats(result: PracticeResult): void {
+    const mode = getPracticeMode(result.modeId);
+    const rows: Array<[string, string]> = [
+      ["Drill", mode.name],
+      ["Result", result.outcome.toUpperCase()],
+      ["Score", `${Math.round(result.score)} pts`],
+      ["Best", getPracticeBestSummary(result.modeId, this.practiceBests)]
+    ];
+
+    if (result.reactionTimeMs !== undefined) {
+      rows.push(["Reaction Time", formatDuration(result.reactionTimeMs)]);
+    }
+
+    if (result.durationMs !== undefined) {
+      rows.push(["Time", formatDuration(result.durationMs)]);
+    }
+
+    if (result.hits !== undefined || result.misses !== undefined) {
+      rows.push(["Accuracy", `${result.hits ?? 0} hits / ${result.misses ?? 0} misses`]);
+    }
+
+    if (result.targetText) {
+      rows.push(["Target", result.targetText]);
+    }
+
+    if (result.fouls !== undefined && result.fouls > 0) {
+      rows.push(["Fouls", String(result.fouls)]);
+    }
+
+    if (result.bestImproved) {
+      rows.push(["Practice Best", "New best"]);
+    }
+
+    for (const [label, value] of rows) {
+      const row = document.createElement("div");
+      row.className = "stat-row";
+
+      if (label === "Target" || label === "Practice Best") {
+        row.classList.add("is-wide");
+      }
+
+      if (label === "Practice Best") {
+        row.classList.add("is-reward");
+      }
+
+      const labelEl = document.createElement("span");
+      labelEl.textContent = label;
+
+      const valueEl = document.createElement("strong");
+      valueEl.textContent = value;
+
+      row.append(labelEl, valueEl);
+      this.ui.stats.append(row);
+    }
+  }
 }
 
 function randomRange(min: number, max: number): number {
@@ -3309,6 +3984,17 @@ function getUpgradeShopTier(upgradeId: UpgradeId): number {
       return 4;
     case "lucky-charm":
       return 5;
+  }
+}
+
+function getPracticeTargetColor(kind: PracticeTargetSpec["kind"]): string {
+  switch (kind) {
+    case "bottle":
+      return "#5dbb8a";
+    case "can":
+      return "#cfd7dc";
+    case "sign":
+      return "#f1c36b";
   }
 }
 
