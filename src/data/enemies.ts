@@ -41,6 +41,45 @@ export interface EnemyVisualConfig {
   skinColor: string;
   scale: number;
   drawLeanDistance: number;
+  frame: EnemyFrameConfig;
+  accessories: EnemyAccessoryConfig;
+  motion: EnemyMotionConfig;
+}
+
+export interface EnemyFrameConfig {
+  heightScale: number;
+  shoulderWidth: number;
+  torsoWidth: number;
+  torsoDepth: number;
+  waistWidth: number;
+  armLength: number;
+  armThickness: number;
+  legLength: number;
+  legThickness: number;
+  stanceWidth: number;
+  headScale: number;
+  hatBrimScale: number;
+  hatCrownScale: number;
+  hunch: number;
+  sideStance: number;
+}
+
+export interface EnemyAccessoryConfig {
+  hasCoat: boolean;
+  hasLongCoat: boolean;
+  hasPoncho: boolean;
+  hasBandana: boolean;
+  hasBadge: boolean;
+  hasEyePatch: boolean;
+  hasScar: boolean;
+}
+
+export interface EnemyMotionConfig {
+  idleSway: number;
+  handTwitch: number;
+  shoulderTwitch: number;
+  hitSlump: number;
+  disarmJerk: number;
 }
 
 export interface EnemyDefinition {
@@ -78,7 +117,40 @@ export const ENEMIES = [
       hatColor: "#6e4b28",
       skinColor: "#bd8558",
       scale: 0.95,
-      drawLeanDistance: 0
+      drawLeanDistance: 0,
+      frame: {
+        heightScale: 0.94,
+        shoulderWidth: 0.76,
+        torsoWidth: 0.7,
+        torsoDepth: 0.34,
+        waistWidth: 0.58,
+        armLength: 0.92,
+        armThickness: 0.13,
+        legLength: 0.84,
+        legThickness: 0.16,
+        stanceWidth: 0.34,
+        headScale: 0.98,
+        hatBrimScale: 1.28,
+        hatCrownScale: 1.06,
+        hunch: 0.18,
+        sideStance: 0
+      },
+      accessories: {
+        hasCoat: true,
+        hasLongCoat: false,
+        hasPoncho: false,
+        hasBandana: false,
+        hasBadge: false,
+        hasEyePatch: false,
+        hasScar: false
+      },
+      motion: {
+        idleSway: 0.055,
+        handTwitch: 0.05,
+        shoulderTwitch: 0.03,
+        hitSlump: 0.32,
+        disarmJerk: 0.55
+      }
     },
     portrait: {
       imageUrl: "/bounties/billy-the-shaky.webp",
@@ -123,7 +195,40 @@ export const ENEMIES = [
       hatColor: "#35231d",
       skinColor: "#a96d4b",
       scale: 1,
-      drawLeanDistance: 0
+      drawLeanDistance: 0,
+      frame: {
+        heightScale: 1,
+        shoulderWidth: 0.7,
+        torsoWidth: 0.58,
+        torsoDepth: 0.3,
+        waistWidth: 0.48,
+        armLength: 1.02,
+        armThickness: 0.12,
+        legLength: 0.94,
+        legThickness: 0.13,
+        stanceWidth: 0.34,
+        headScale: 0.94,
+        hatBrimScale: 0.98,
+        hatCrownScale: 1.04,
+        hunch: 0.06,
+        sideStance: -0.04
+      },
+      accessories: {
+        hasCoat: true,
+        hasLongCoat: false,
+        hasPoncho: false,
+        hasBandana: true,
+        hasBadge: false,
+        hasEyePatch: false,
+        hasScar: true
+      },
+      motion: {
+        idleSway: 0.028,
+        handTwitch: 0.1,
+        shoulderTwitch: 0.07,
+        hitSlump: 0.26,
+        disarmJerk: 0.8
+      }
     },
     portrait: {
       imageUrl: "/bounties/red-eye-ramos.webp",
@@ -168,7 +273,40 @@ export const ENEMIES = [
       hatColor: "#1f2427",
       skinColor: "#b77b52",
       scale: 1.03,
-      drawLeanDistance: 0
+      drawLeanDistance: 0,
+      frame: {
+        heightScale: 1.08,
+        shoulderWidth: 0.9,
+        torsoWidth: 0.74,
+        torsoDepth: 0.34,
+        waistWidth: 0.62,
+        armLength: 1,
+        armThickness: 0.15,
+        legLength: 1.02,
+        legThickness: 0.17,
+        stanceWidth: 0.4,
+        headScale: 1,
+        hatBrimScale: 1.04,
+        hatCrownScale: 1.02,
+        hunch: 0,
+        sideStance: 0
+      },
+      accessories: {
+        hasCoat: true,
+        hasLongCoat: true,
+        hasPoncho: false,
+        hasBandana: false,
+        hasBadge: true,
+        hasEyePatch: false,
+        hasScar: false
+      },
+      motion: {
+        idleSway: 0.01,
+        handTwitch: 0.014,
+        shoulderTwitch: 0.01,
+        hitSlump: 0.24,
+        disarmJerk: 0.45
+      }
     },
     portrait: {
       imageUrl: "/bounties/marshal-graves.webp",
@@ -213,7 +351,40 @@ export const ENEMIES = [
       hatColor: "#1d1b25",
       skinColor: "#9f6c52",
       scale: 0.98,
-      drawLeanDistance: -0.34
+      drawLeanDistance: -0.34,
+      frame: {
+        heightScale: 1,
+        shoulderWidth: 0.82,
+        torsoWidth: 0.68,
+        torsoDepth: 0.32,
+        waistWidth: 0.56,
+        armLength: 0.96,
+        armThickness: 0.13,
+        legLength: 0.92,
+        legThickness: 0.14,
+        stanceWidth: 0.5,
+        headScale: 0.96,
+        hatBrimScale: 1.34,
+        hatCrownScale: 0.94,
+        hunch: 0.02,
+        sideStance: -0.12
+      },
+      accessories: {
+        hasCoat: false,
+        hasLongCoat: false,
+        hasPoncho: true,
+        hasBandana: false,
+        hasBadge: false,
+        hasEyePatch: false,
+        hasScar: true
+      },
+      motion: {
+        idleSway: 0.018,
+        handTwitch: 0.045,
+        shoulderTwitch: 0.03,
+        hitSlump: 0.2,
+        disarmJerk: 0.62
+      }
     },
     portrait: {
       imageUrl: "/bounties/dust-widow.webp",
@@ -258,7 +429,40 @@ export const ENEMIES = [
       hatColor: "#0d0c0b",
       skinColor: "#9b6847",
       scale: 1.07,
-      drawLeanDistance: 0.12
+      drawLeanDistance: 0.12,
+      frame: {
+        heightScale: 1.1,
+        shoulderWidth: 1.04,
+        torsoWidth: 0.88,
+        torsoDepth: 0.38,
+        waistWidth: 0.72,
+        armLength: 1.06,
+        armThickness: 0.18,
+        legLength: 1.02,
+        legThickness: 0.19,
+        stanceWidth: 0.5,
+        headScale: 1.04,
+        hatBrimScale: 1.38,
+        hatCrownScale: 1.16,
+        hunch: 0.02,
+        sideStance: 0.04
+      },
+      accessories: {
+        hasCoat: true,
+        hasLongCoat: true,
+        hasPoncho: false,
+        hasBandana: true,
+        hasBadge: false,
+        hasEyePatch: true,
+        hasScar: false
+      },
+      motion: {
+        idleSway: 0.006,
+        handTwitch: 0.025,
+        shoulderTwitch: 0.012,
+        hitSlump: 0.18,
+        disarmJerk: 0.48
+      }
     },
     portrait: {
       imageUrl: "/bounties/the-black-hat.webp",

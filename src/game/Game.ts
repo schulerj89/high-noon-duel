@@ -2,6 +2,9 @@ import * as THREE from "three";
 import { AudioManager } from "../audio/AudioManager";
 import { DEFAULT_ENEMY, ENEMIES, type EnemyDefinition } from "../data/enemies";
 import { UPGRADES, type UpgradeDefinition, type UpgradeId } from "../data/upgrades";
+import { createEnemy } from "../scene/createEnemy";
+import { updateEnemyMaterials } from "../scene/enemyMaterials";
+import { resetEnemyRigPose, type EnemyRig } from "../scene/enemyRig";
 import { GAME_CONFIG } from "./config";
 import {
   clearSavedProgression,
@@ -79,13 +82,6 @@ interface FakeoutWindow {
   intensity: number;
 }
 
-interface EnemyMaterials {
-  coat: THREE.MeshStandardMaterial;
-  shirt: THREE.MeshStandardMaterial;
-  hat: THREE.MeshStandardMaterial;
-  skin: THREE.MeshStandardMaterial;
-}
-
 interface PlayerShotTiming {
   beatsEnemy: boolean;
   enemyFiredAt: number;
@@ -127,9 +123,7 @@ export class Game {
   private lastPlayerShotAt: number | null = null;
   private lastEnemyShotAt: number | null = null;
   private lastMissAt: number | null = null;
-  private enemyGroup: THREE.Group | null = null;
-  private enemyGunArm: THREE.Group | null = null;
-  private enemyMaterials: EnemyMaterials | null = null;
+  private enemyRig: EnemyRig | null = null;
   private gunGroup: THREE.Group | null = null;
   private muzzleFlash: THREE.Mesh | null = null;
   private enemyMuzzleFlash: THREE.Mesh | null = null;
@@ -263,18 +257,8 @@ export class Game {
       this.muzzleFlash.visible = false;
     }
 
-    if (this.enemyMuzzleFlash) {
-      this.enemyMuzzleFlash.visible = false;
-    }
-
-    if (this.enemyGroup) {
-      this.enemyGroup.position.set(0, 0, -5.7);
-      this.enemyGroup.rotation.set(0, 0, 0);
-      this.enemyGroup.scale.setScalar(this.selectedEnemy.visual.scale);
-    }
-
-    if (this.enemyGunArm) {
-      this.enemyGunArm.rotation.z = -0.35;
+    if (this.enemyRig) {
+      resetEnemyRigPose(this.enemyRig);
     }
 
     if (this.missDustGroup) {
@@ -298,13 +282,8 @@ export class Game {
     this.lastEnemyShotAt = null;
     this.lastMissAt = null;
 
-    if (this.enemyGroup) {
-      this.enemyGroup.position.set(0, 0, -5.7);
-      this.enemyGroup.rotation.set(0, 0, 0);
-    }
-
-    if (this.enemyGunArm) {
-      this.enemyGunArm.rotation.z = -0.35;
+    if (this.enemyRig) {
+      resetEnemyRigPose(this.enemyRig);
     }
 
     this.updateEnemyVisual();
@@ -317,7 +296,7 @@ export class Game {
     this.selectedEnemy = enemy;
     this.progression = rememberSelectedEnemy(this.progression, enemy.id);
     saveProgression(this.progression);
-    this.updateEnemyVisual();
+    this.rebuildEnemy();
     this.renderBountyBoard();
     this.startRound();
   }
@@ -699,9 +678,7 @@ export class Game {
     this.boardMode = "bounties";
     this.lastMoneyEarned = 0;
     this.lastShopMessage = "Progress reset.";
-    this.updateEnemyVisual();
-    this.updateHitZoneScale();
-    this.updateHitBoxVisibility();
+    this.rebuildEnemy();
     this.renderBountyBoard();
     this.updateOverlay();
   }
@@ -907,54 +884,108 @@ export class Game {
   }
 
   private updateEnemyPose(delta: number): void {
+    if (!this.enemyRig) {
+      return;
+    }
+
+    const rig = this.enemyRig;
     const ease = 1 - Math.exp(-delta * 12);
     const now = performance.now();
     const fakeoutIntensity = this.getFakeoutIntensity(now);
+    const motion = this.selectedEnemy.visual.motion;
+    const base = rig.basePose;
+    const isEnemyDrawing = this.state.phase === "draw" || this.state.phase === "missed";
+    const playerWon = this.state.result?.outcome === "win";
+    const playerLost = this.state.result?.outcome === "loss";
+    const disarmed = playerWon && this.state.result?.stats.shotResult === "disarm";
+    const drawAt = this.state.stats.drawAt ?? this.state.scheduledDrawAt;
+    const drawElapsed = Math.max(0, now - drawAt);
+    const drawProgress = isEnemyDrawing
+      ? THREE.MathUtils.clamp(drawElapsed / Math.max(1, this.enemyReactionMs), 0, 1)
+      : 0;
+    const idlePhase = now * 0.004;
+    const idleEnabled = this.state.phase !== "resolved" || playerWon;
+    const idleSway = idleEnabled ? Math.sin(idlePhase) * motion.idleSway : 0;
+    const targetLean = isEnemyDrawing ? this.selectedEnemy.visual.drawLeanDistance : 0;
+    const rootSlump = playerWon ? motion.hitSlump : 0;
 
-    if (this.enemyGunArm) {
-      let targetRotation = -0.35;
+    rig.root.position.x = THREE.MathUtils.lerp(
+      rig.root.position.x,
+      base.root.position[0] + targetLean + idleSway,
+      ease
+    );
+    rig.root.position.y = THREE.MathUtils.lerp(
+      rig.root.position.y,
+      base.root.position[1] - rootSlump * 0.1,
+      ease
+    );
+    rig.root.rotation.y = THREE.MathUtils.lerp(rig.root.rotation.y, base.root.rotation[1], ease);
+    rig.root.rotation.z = THREE.MathUtils.lerp(
+      rig.root.rotation.z,
+      base.root.rotation[2] - rootSlump,
+      ease
+    );
 
-      if (fakeoutIntensity > 0) {
-        targetRotation = THREE.MathUtils.lerp(-0.35, -0.92, fakeoutIntensity);
-      }
+    rig.torso.rotation.x = THREE.MathUtils.lerp(
+      rig.torso.rotation.x,
+      base.torso.rotation[0] + (playerWon ? 0.28 : 0),
+      ease
+    );
+    rig.head.rotation.x = THREE.MathUtils.lerp(
+      rig.head.rotation.x,
+      base.head.rotation[0] - (playerWon ? 0.18 : 0),
+      ease
+    );
+    rig.shoulders.rotation.z = THREE.MathUtils.lerp(
+      rig.shoulders.rotation.z,
+      base.shoulders.rotation[2] - fakeoutIntensity * motion.shoulderTwitch,
+      ease
+    );
 
-      if (this.state.phase === "draw" || this.state.phase === "missed") {
-        const drawAt = this.state.stats.drawAt ?? this.state.scheduledDrawAt;
-        const elapsed = now - drawAt;
-        const drawProgress = THREE.MathUtils.clamp(elapsed / Math.max(1, this.enemyReactionMs), 0, 1);
-        targetRotation = THREE.MathUtils.lerp(-0.35, -1.42, drawProgress);
-      }
+    let upperArmTarget = base.rightUpperArm.rotation[2];
+    let forearmTarget = base.rightForearm.rotation[2];
+    let handTargetX = base.rightHand.position[0];
+    let handTargetZ = base.rightHand.position[2];
+    let handTwistTarget = base.rightHand.rotation[2];
+    let gunKickTarget = base.gun.rotation[0];
 
-      if (this.enemyHasFired || this.state.phase === "missed" || this.state.result?.outcome === "loss") {
-        targetRotation = -1.42;
-      }
-
-      this.enemyGunArm.rotation.z = THREE.MathUtils.lerp(
-        this.enemyGunArm.rotation.z,
-        targetRotation,
-        ease
-      );
+    if (fakeoutIntensity > 0) {
+      const twitch = Math.sin(now * 0.08) * motion.handTwitch * fakeoutIntensity;
+      upperArmTarget -= motion.shoulderTwitch * fakeoutIntensity;
+      forearmTarget -= 0.35 * fakeoutIntensity + motion.handTwitch;
+      handTargetX += twitch;
+      handTargetZ += 0.05 * fakeoutIntensity;
     }
 
-    if (this.enemyGroup) {
-      const playerWon = this.state.result?.outcome === "win";
-      const targetTilt = playerWon ? -0.18 : 0;
-      const targetLean =
-        this.state.phase === "draw" || this.state.phase === "missed"
-          ? this.selectedEnemy.visual.drawLeanDistance
-          : 0;
-
-      this.enemyGroup.position.x = THREE.MathUtils.lerp(
-        this.enemyGroup.position.x,
-        targetLean,
-        ease
-      );
-      this.enemyGroup.rotation.z = THREE.MathUtils.lerp(
-        this.enemyGroup.rotation.z,
-        targetTilt,
-        ease
-      );
+    if (isEnemyDrawing) {
+      upperArmTarget = THREE.MathUtils.lerp(base.rightUpperArm.rotation[2], -0.55, drawProgress);
+      forearmTarget = THREE.MathUtils.lerp(base.rightForearm.rotation[2], -1.18, drawProgress);
+      handTargetZ += 0.12 * drawProgress;
     }
+
+    if (this.enemyHasFired || playerLost) {
+      upperArmTarget = -0.55;
+      forearmTarget = -1.18;
+      gunKickTarget = base.gun.rotation[0] - 0.18;
+    }
+
+    if (disarmed) {
+      upperArmTarget = base.rightUpperArm.rotation[2] + 0.32;
+      forearmTarget = base.rightForearm.rotation[2] + motion.disarmJerk;
+      handTargetX += 0.2;
+      handTargetZ -= 0.18;
+      handTwistTarget += 0.75;
+      gunKickTarget += 0.7;
+    } else if (playerWon) {
+      forearmTarget = base.rightForearm.rotation[2] + motion.disarmJerk * 0.2;
+    }
+
+    rig.rightUpperArm.rotation.z = THREE.MathUtils.lerp(rig.rightUpperArm.rotation.z, upperArmTarget, ease);
+    rig.rightForearm.rotation.z = THREE.MathUtils.lerp(rig.rightForearm.rotation.z, forearmTarget, ease);
+    rig.rightHand.position.x = THREE.MathUtils.lerp(rig.rightHand.position.x, handTargetX, ease);
+    rig.rightHand.position.z = THREE.MathUtils.lerp(rig.rightHand.position.z, handTargetZ, ease);
+    rig.rightHand.rotation.z = THREE.MathUtils.lerp(rig.rightHand.rotation.z, handTwistTarget, ease);
+    rig.gun.rotation.x = THREE.MathUtils.lerp(rig.gun.rotation.x, gunKickTarget, ease);
   }
 
   private getFakeoutIntensity(now: number): number {
@@ -1163,118 +1194,75 @@ export class Game {
   }
 
   private addEnemy(): void {
-    const group = new THREE.Group();
-    group.position.set(0, 0, -5.7);
+    const rig = createEnemy(this.selectedEnemy);
 
-    const bootMaterial = new THREE.MeshStandardMaterial({ color: "#1f1b1a", roughness: 0.8 });
-    const coatMaterial = new THREE.MeshStandardMaterial({ color: this.selectedEnemy.visual.coatColor, roughness: 0.82 });
-    const shirtMaterial = new THREE.MeshStandardMaterial({ color: this.selectedEnemy.visual.shirtColor, roughness: 0.78 });
-    const skinMaterial = new THREE.MeshStandardMaterial({ color: this.selectedEnemy.visual.skinColor, roughness: 0.72 });
-    const hatMaterial = new THREE.MeshStandardMaterial({ color: this.selectedEnemy.visual.hatColor, roughness: 0.9 });
-    this.enemyMaterials = {
-      coat: coatMaterial,
-      shirt: shirtMaterial,
-      hat: hatMaterial,
-      skin: skinMaterial
-    };
-
-    const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.9, 0.22), bootMaterial);
-    leftLeg.position.set(-0.18, 0.45, 0);
-    const rightLeg = leftLeg.clone();
-    rightLeg.position.x = 0.18;
-    group.add(leftLeg, rightLeg);
-
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.82, 1.0, 0.32), coatMaterial);
-    torso.position.set(0, 1.18, 0);
-    torso.castShadow = true;
-    torso.receiveShadow = true;
-    group.add(torso);
-
-    const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.84, 0.34), shirtMaterial);
-    shirt.position.set(0, 1.18, 0.03);
-    group.add(shirt);
-
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 18, 14), skinMaterial);
-    head.position.set(0, 1.92, 0);
-    head.castShadow = true;
-    group.add(head);
-
-    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.46, 0.07, 20), hatMaterial);
-    brim.position.set(0, 2.14, 0);
-    brim.castShadow = true;
-    group.add(brim);
-
-    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.29, 0.26, 16), hatMaterial);
-    crown.position.set(0, 2.28, 0);
-    crown.castShadow = true;
-    group.add(crown);
-
-    const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.76, 0.16), coatMaterial);
-    leftArm.position.set(-0.56, 1.16, 0);
-    leftArm.rotation.z = 0.28;
-    leftArm.castShadow = true;
-    group.add(leftArm);
-
-    const gunArm = new THREE.Group();
-    gunArm.position.set(0.55, 1.48, 0.02);
-    gunArm.rotation.z = -0.35;
-
-    const armMesh = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.78, 0.16), coatMaterial);
-    armMesh.position.set(0, -0.36, 0);
-    armMesh.castShadow = true;
-    gunArm.add(armMesh);
-
-    const enemyGun = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.34, 0.1), bootMaterial);
-    enemyGun.position.set(0.02, -0.76, 0.02);
-    enemyGun.castShadow = true;
-    gunArm.add(enemyGun);
-
-    const flash = new THREE.Mesh(
-      new THREE.SphereGeometry(0.13, 10, 8),
-      new THREE.MeshBasicMaterial({ color: "#ffe071", transparent: true, opacity: 0.88 })
-    );
-    flash.position.set(0.03, -0.96, 0.06);
-    flash.visible = false;
-    gunArm.add(flash);
-
-    const holster = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.34, 0.14), bootMaterial);
-    holster.position.set(0.47, 0.82, 0.08);
-    holster.rotation.z = -0.22;
-    group.add(holster);
-
-    group.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        object.castShadow = true;
-        object.receiveShadow = true;
-      }
-    });
-
-    group.add(gunArm);
-    this.addHitZones(group, gunArm);
-    this.scene.add(group);
-    this.enemyGroup = group;
-    this.enemyGunArm = gunArm;
-    this.enemyMuzzleFlash = flash;
+    this.enemyRig = rig;
+    this.enemyMuzzleFlash = rig.muzzleFlash;
+    this.addHitZones(rig);
+    this.scene.add(rig.root);
     this.updateEnemyVisual();
   }
 
   private updateEnemyVisual(): void {
-    if (this.enemyMaterials) {
-      this.enemyMaterials.coat.color.set(this.selectedEnemy.visual.coatColor);
-      this.enemyMaterials.shirt.color.set(this.selectedEnemy.visual.shirtColor);
-      this.enemyMaterials.hat.color.set(this.selectedEnemy.visual.hatColor);
-      this.enemyMaterials.skin.color.set(this.selectedEnemy.visual.skinColor);
+    if (!this.enemyRig) {
+      return;
     }
 
-    if (this.enemyGroup && this.state.phase === "intro") {
-      this.enemyGroup.scale.setScalar(this.selectedEnemy.visual.scale);
+    updateEnemyMaterials(this.enemyRig.materials, this.selectedEnemy);
+
+    if (this.state.phase === "intro") {
+      this.enemyRig.root.scale.setScalar(this.selectedEnemy.visual.scale);
     }
   }
 
-  private addHitZones(enemyGroup: THREE.Group, gunArm: THREE.Group): void {
+  private rebuildEnemy(): void {
+    this.clearHitZones();
+
+    if (this.enemyRig) {
+      this.scene.remove(this.enemyRig.root);
+      this.disposeObject(this.enemyRig.root);
+    }
+
+    this.enemyRig = null;
+    this.enemyMuzzleFlash = null;
+    this.addEnemy();
+  }
+
+  private clearHitZones(): void {
+    for (const mesh of this.hitZoneMeshes) {
+      mesh.parent?.remove(mesh);
+      mesh.geometry.dispose();
+      this.disposeMaterial(mesh.material);
+    }
+
+    this.hitZoneMeshes.length = 0;
+    this.hitZoneByMesh.clear();
+  }
+
+  private disposeObject(object: THREE.Object3D): void {
+    object.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        this.disposeMaterial(child.material);
+      }
+    });
+  }
+
+  private disposeMaterial(material: THREE.Material | THREE.Material[]): void {
+    if (Array.isArray(material)) {
+      for (const item of material) {
+        item.dispose();
+      }
+      return;
+    }
+
+    material.dispose();
+  }
+
+  private addHitZones(rig: EnemyRig): void {
     for (const definition of HIT_ZONE_DEFINITIONS) {
       const mesh = this.createHitZoneMesh(definition);
-      const parent = this.getHitZoneParent(definition.parent, enemyGroup, gunArm);
+      const parent = this.getHitZoneParent(definition.parent, rig);
 
       parent.add(mesh);
       this.hitZoneMeshes.push(mesh);
@@ -1309,10 +1297,16 @@ export class Game {
 
   private getHitZoneParent(
     parent: HitZoneParent,
-    enemyGroup: THREE.Group,
-    gunArm: THREE.Group
+    rig: EnemyRig
   ): THREE.Group {
-    return parent === "gunArm" ? gunArm : enemyGroup;
+    switch (parent) {
+      case "torso":
+        return rig.torso;
+      case "head":
+        return rig.head;
+      case "rightHand":
+        return rig.rightHand;
+    }
   }
 
   private updateHitBoxVisibility(): void {

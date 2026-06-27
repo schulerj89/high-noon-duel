@@ -1,6 +1,6 @@
 export type ShotResult = "torso" | "head" | "disarm" | "miss";
 export type HitZoneShape = "box" | "sphere";
-export type HitZoneParent = "enemy" | "gunArm";
+export type HitZoneParent = "torso" | "head" | "rightHand";
 
 export interface HitZoneDefinition {
   id: string;
@@ -26,8 +26,8 @@ export const HIT_ZONE_DEFINITIONS = [
     label: "Torso",
     shotResult: "torso",
     shape: "box",
-    parent: "enemy",
-    position: [0, 1.2, 0.1],
+    parent: "torso",
+    position: [0, 0, 0.1],
     size: [0.92, 1.08, 0.5],
     color: "#5fd36b",
     priority: 1
@@ -37,8 +37,8 @@ export const HIT_ZONE_DEFINITIONS = [
     label: "Head",
     shotResult: "head",
     shape: "sphere",
-    parent: "enemy",
-    position: [0, 1.92, 0.08],
+    parent: "head",
+    position: [0, 0, 0.08],
     size: [0.34, 0.34, 0.34],
     color: "#ffe56e",
     priority: 3,
@@ -49,9 +49,9 @@ export const HIT_ZONE_DEFINITIONS = [
     label: "Gun Hand",
     shotResult: "disarm",
     shape: "box",
-    parent: "gunArm",
-    position: [0.02, -0.66, 0.08],
-    size: [0.36, 0.36, 0.34],
+    parent: "rightHand",
+    position: [0, 0, 0.08],
+    size: [0.38, 0.38, 0.36],
     color: "#5ab7ff",
     priority: 4,
     styleBonusText: "Style bonus: disarm."
