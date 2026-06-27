@@ -38,6 +38,11 @@ export interface BountyContractDefinition {
   id: string;
   enemyId: string;
   modifierId: DuelModifierId;
+  townId?: string;
+  isBoss?: boolean;
+  isLocked?: boolean;
+  isBossDefeated?: boolean;
+  lockText?: string;
 }
 
 export const DUEL_MODIFIERS = [

@@ -24,8 +24,6 @@ import {
   type PlaytestTelemetry
 } from "../debug/telemetry";
 import {
-  BOUNTY_CONTRACTS,
-  getDefaultBountyContract,
   getDuelModifier,
   type BountyContractDefinition,
   type DuelModifierDefinition
@@ -37,6 +35,7 @@ import {
 } from "../data/conditions";
 import { DEFAULT_ENEMY, ENEMIES, type EnemyDefinition } from "../data/enemies";
 import { getEnemyBehavior } from "../data/enemyBehaviors";
+import type { TownDefinition, TownId } from "../data/towns";
 import { UPGRADES, type UpgradeDefinition, type UpgradeId } from "../data/upgrades";
 import { getCameraPresentation } from "../scene/cameraPresentation";
 import {
@@ -68,13 +67,22 @@ import {
   derivePlayerStats,
   formatConditionDuration,
   getActiveConditionDefinitions,
+  getDefaultCampaignContract,
   getOwnedUpgradeNames,
+  getSelectedTown,
+  getTownBountyContracts,
+  getTownBossStatusText,
+  getTownProgress,
+  getUnlockedShopTier,
+  isTownUnlocked,
   loadProgression,
   purchaseUpgrade,
   repairCondition,
   rememberSelectedEnemy,
   saveProgression,
+  selectCampaignTown,
   settleDuelProgression,
+  type CampaignChange,
   type ConditionChange,
   type PlayerProgression,
   type PlayerStats
@@ -105,6 +113,7 @@ import {
   startDuel
 } from "./state";
 import type { DrawAnimationStyle } from "./tells";
+import { createTownSelector } from "../ui/townSelector";
 
 interface UiElements {
   overlay: HTMLDivElement;
@@ -196,8 +205,9 @@ export class Game {
   private playerStats: PlayerStats = this.createPlayerStats();
   private state: DuelState = createIntroDuelState(performance.now());
   private timing: CountdownTiming = this.createRoundTiming();
-  private selectedContract: BountyContractDefinition = getDefaultBountyContract(
-    this.progression.selectedEnemyId
+  private selectedTown: TownDefinition = getSelectedTown(this.progression.campaign);
+  private selectedContract: BountyContractDefinition = getDefaultCampaignContract(
+    this.progression.campaign
   );
   private selectedEnemy: EnemyDefinition = getEnemyById(this.selectedContract.enemyId);
   private selectedModifier: DuelModifierDefinition = getDuelModifier(
@@ -220,6 +230,8 @@ export class Game {
   private lastMoneyEarned = 0;
   private lastShopMessage = "";
   private lastConditionChanges: ConditionChange[] = [];
+  private lastCampaignChanges: CampaignChange[] = [];
+  private lastCampaignReward = 0;
   private lastLuckyCharmTriggered = false;
   private lastPlayerShotAt: number | null = null;
   private lastEnemyShotAt: number | null = null;
@@ -374,6 +386,8 @@ export class Game {
     this.lastMoneyEarned = 0;
     this.lastShopMessage = "";
     this.lastConditionChanges = [];
+    this.lastCampaignChanges = [];
+    this.lastCampaignReward = 0;
     this.lastLuckyCharmTriggered = false;
     this.lastPlayerShotAt = null;
     this.lastEnemyShotAt = null;
@@ -438,15 +452,54 @@ export class Game {
   };
 
   private selectBountyContract(contract: BountyContractDefinition): void {
+    if (contract.isLocked) {
+      this.lastShopMessage = contract.lockText ?? "Boss locked.";
+      this.renderBountyBoard();
+      return;
+    }
+
     this.selectedContract = contract;
     this.selectedEnemy = getEnemyById(contract.enemyId);
     this.selectedModifier = getDuelModifier(contract.modifierId);
     this.progression = rememberSelectedEnemy(this.progression, this.selectedEnemy.id);
+
+    if (contract.townId && isTownUnlocked(this.progression.campaign, contract.townId)) {
+      this.progression = {
+        ...this.progression,
+        campaign: selectCampaignTown(this.progression.campaign, contract.townId)
+      };
+      this.selectedTown = getSelectedTown(this.progression.campaign);
+    }
+
     saveProgression(this.progression);
     this.rebuildEnemy();
     this.renderBountyBoard();
     this.applyCurrentEnvironment();
     this.startRound();
+  }
+
+  private selectTown(townId: string): void {
+    if (!isTownUnlocked(this.progression.campaign, townId)) {
+      this.lastShopMessage = "Town locked.";
+      this.renderBountyBoard();
+      return;
+    }
+
+    this.audio.playSfx("posterPaper");
+    this.progression = {
+      ...this.progression,
+      campaign: selectCampaignTown(this.progression.campaign, townId as TownId)
+    };
+    this.selectedTown = getSelectedTown(this.progression.campaign);
+    this.selectedContract = getDefaultCampaignContract(this.progression.campaign);
+    this.selectedEnemy = getEnemyById(this.selectedContract.enemyId);
+    this.selectedModifier = getDuelModifier(this.selectedContract.modifierId);
+    this.lastShopMessage = "";
+    saveProgression(this.progression);
+    this.rebuildEnemy();
+    this.applyCurrentEnvironment();
+    this.renderBountyBoard();
+    this.updateOverlay();
   }
 
   private createRoundTiming(): CountdownTiming {
@@ -1136,11 +1189,15 @@ export class Game {
       result: this.state.result,
       reward,
       selectedEnemyId: this.selectedEnemy.id,
-      modifierId: this.selectedModifier.id
+      modifierId: this.selectedModifier.id,
+      contract: this.selectedContract
     });
 
     this.progression = progressionResult.progression;
     this.lastConditionChanges = progressionResult.conditionChanges;
+    this.lastCampaignChanges = progressionResult.campaignChanges;
+    this.lastCampaignReward = progressionResult.campaignReward;
+    this.selectedTown = getSelectedTown(this.progression.campaign);
     this.playerStats = this.createPlayerStats();
     this.lastMoneyEarned = reward;
     this.duelSettled = true;
@@ -1158,7 +1215,12 @@ export class Game {
       this.showRewardToast(reward);
     }
 
+    if (progressionResult.campaignReward > 0) {
+      this.showRewardToast(reward + progressionResult.campaignReward);
+    }
+
     this.playDuelResultAudio();
+    this.showCampaignSubtitle();
     this.renderBountyBoard();
   }
 
@@ -1219,13 +1281,16 @@ export class Game {
     this.progression = createDefaultProgression();
     saveProgression(this.progression);
     this.playerStats = this.createPlayerStats();
-    this.selectedContract = getDefaultBountyContract(this.progression.selectedEnemyId);
+    this.selectedTown = getSelectedTown(this.progression.campaign);
+    this.selectedContract = getDefaultCampaignContract(this.progression.campaign);
     this.selectedEnemy = getEnemyById(this.selectedContract.enemyId);
     this.selectedModifier = getDuelModifier(this.selectedContract.modifierId);
     this.boardMode = "bounties";
     this.lastMoneyEarned = 0;
     this.lastShopMessage = "Progress reset.";
     this.lastConditionChanges = [];
+    this.lastCampaignChanges = [];
+    this.lastCampaignReward = 0;
     this.rebuildEnemy();
     this.renderBountyBoard();
     this.applyCurrentEnvironment();
@@ -1447,6 +1512,28 @@ export class Game {
     this.rewardToastText = `+$${reward} bounty claimed`;
     this.rewardToastUntil = performance.now() + 1700;
     this.updateRewardToast(performance.now());
+  }
+
+  private showCampaignSubtitle(): void {
+    if (this.lastCampaignChanges.length === 0) {
+      return;
+    }
+
+    const completionChange =
+      this.lastCampaignChanges.find((change) => change.type === "town-unlocked") ??
+      this.lastCampaignChanges.find((change) => change.type === "town-completed") ??
+      this.lastCampaignChanges.find((change) => change.type === "boss-unlocked");
+
+    if (!completionChange) {
+      return;
+    }
+
+    this.showSubtitle({
+      speaker: "Trail",
+      line: completionChange.message,
+      durationMs: 1900,
+      tone: "result"
+    });
   }
 
   private updateRewardToast(now: number): void {
@@ -2458,13 +2545,14 @@ export class Game {
     heading.className = "bounty-heading";
 
     const title = document.createElement("h1");
-    title.textContent = this.boardMode === "shop" ? "Upgrade Shop" : "Bounty Board";
+    title.textContent =
+      this.boardMode === "shop" ? "Upgrade Shop" : `${this.selectedTown.name} Bounty Board`;
 
     const copy = document.createElement("p");
     copy.textContent =
       this.boardMode === "shop"
-        ? "Buy small edges. None of them replace a clean draw and a steady aim."
-        : "Choose a duel. Faster enemies pay better, but their tells are meaner.";
+        ? `Shop tier ${getUnlockedShopTier(this.progression.campaign)} available across unlocked towns.`
+        : this.selectedTown.description;
 
     const boardActions = document.createElement("div");
     boardActions.className = "board-actions";
@@ -2481,20 +2569,24 @@ export class Game {
     heading.append(title, copy, boardActions);
 
     const progressSummary = this.createProgressSummary();
+    const townSelector = createTownSelector({
+      campaign: this.progression.campaign,
+      onSelectTown: (townId) => this.selectTown(townId)
+    });
 
     if (this.boardMode === "shop") {
-      this.ui.bountyBoard.append(heading, progressSummary, this.createShopList());
+      this.ui.bountyBoard.append(heading, townSelector, progressSummary, this.createShopList());
       return;
     }
 
     const list = document.createElement("div");
     list.className = "bounty-list";
 
-    for (const contract of BOUNTY_CONTRACTS) {
+    for (const contract of getTownBountyContracts(this.selectedTown, this.progression.campaign)) {
       list.append(this.createBountyPoster(contract));
     }
 
-    this.ui.bountyBoard.append(heading, progressSummary, list);
+    this.ui.bountyBoard.append(heading, townSelector, progressSummary, list);
   }
 
   private createBountyPoster(contract: BountyContractDefinition): HTMLButtonElement {
@@ -2507,6 +2599,8 @@ export class Game {
     card.dataset.enemyId = enemy.id;
     card.dataset.contractId = contract.id;
     card.dataset.modifierId = modifier.id;
+    card.dataset.townId = contract.townId ?? "";
+    card.disabled = contract.isLocked === true;
     card.style.setProperty("--poster-rotate", `${enemy.portrait.boardRotationDeg}deg`);
     card.style.setProperty("--poster-offset-y", `${enemy.portrait.boardOffsetY}px`);
     card.style.setProperty("--poster-paper", enemy.portrait.palette.paperTint);
@@ -2514,6 +2608,9 @@ export class Game {
     card.style.setProperty("--poster-shadow", enemy.portrait.palette.shadow);
     card.style.setProperty("--poster-accent", enemy.portrait.palette.accent);
     card.classList.toggle("is-selected", contract.id === this.selectedContract.id);
+    card.classList.toggle("is-boss", contract.isBoss === true);
+    card.classList.toggle("is-locked", contract.isLocked === true);
+    card.classList.toggle("is-defeated", contract.isBossDefeated === true);
     card.setAttribute(
       "aria-label",
       `Wanted poster for ${enemy.name}, ${enemy.title}, ${modifier.name}, reward $${rules.reward}`
@@ -2528,7 +2625,7 @@ export class Game {
 
     const wanted = document.createElement("span");
     wanted.className = "poster-wanted";
-    wanted.textContent = "WANTED";
+    wanted.textContent = contract.isBoss ? "BOSS WANTED" : "WANTED";
 
     const portrait = this.createEnemyPortrait(enemy);
 
@@ -2542,7 +2639,9 @@ export class Game {
 
     const meta = document.createElement("span");
     meta.className = "bounty-meta";
-    meta.textContent = `${enemy.difficultyHint} - reward $${rules.reward}`;
+    meta.textContent = contract.isBoss
+      ? `${contract.isBossDefeated ? "Rematch" : "Boss duel"} - reward $${rules.reward}`
+      : `${enemy.difficultyHint} - reward $${rules.reward}`;
 
     const modifierEl = document.createElement("span");
     modifierEl.className = "poster-modifier";
@@ -2555,7 +2654,9 @@ export class Game {
 
     const modifierDescription = document.createElement("p");
     modifierDescription.className = "poster-modifier-description";
-    modifierDescription.textContent = modifier.description;
+    modifierDescription.textContent = contract.isLocked
+      ? contract.lockText ?? "Boss locked."
+      : modifier.description;
 
     const tell = document.createElement("small");
     tell.className = "poster-tell";
@@ -2697,15 +2798,25 @@ export class Game {
     owned.classList.add("owned-upgrades");
     const conditions = this.createProgressCard("Conditions", this.getActiveConditionSummaryText());
     conditions.classList.add("active-conditions");
+    const townProgress = getTownProgress(this.progression.campaign, this.selectedTown.id);
+    const town = this.createProgressCard(
+      "Town Progress",
+      `${townProgress.bountiesWon} wins / ${townProgress.reputation} rep`
+    );
+    const boss = this.createProgressCard(
+      "Boss",
+      getTownBossStatusText(this.progression.campaign, this.selectedTown)
+    );
 
-    summary.append(money, record, owned, conditions);
+    summary.append(money, record, town, boss, owned, conditions);
 
     const conditionMessage = this.getConditionChangeSummaryText();
+    const campaignMessage = this.getCampaignChangeSummaryText();
 
-    if (this.lastShopMessage || conditionMessage) {
+    if (this.lastShopMessage || conditionMessage || campaignMessage) {
       const message = document.createElement("div");
       message.className = "shop-message";
-      message.textContent = [this.lastShopMessage, conditionMessage]
+      message.textContent = [this.lastShopMessage, conditionMessage, campaignMessage]
         .filter((text) => text.length > 0)
         .join(" ");
       summary.append(message);
@@ -2748,6 +2859,10 @@ export class Game {
     return this.lastConditionChanges.map((change) => change.message).join(" ");
   }
 
+  private getCampaignChangeSummaryText(): string {
+    return this.lastCampaignChanges.map((change) => change.message).join(" ");
+  }
+
   private createShopList(): HTMLDivElement {
     const list = document.createElement("div");
     list.className = "shop-list";
@@ -2767,12 +2882,15 @@ export class Game {
 
   private createUpgradeCard(upgrade: UpgradeDefinition): HTMLButtonElement {
     const owned = this.progression.ownedUpgrades.includes(upgrade.id);
+    const shopTier = getUpgradeShopTier(upgrade.id);
+    const tierUnlocked = shopTier <= getUnlockedShopTier(this.progression.campaign);
     const canAfford = this.progression.money >= upgrade.cost;
     const card = document.createElement("button");
     card.className = "upgrade-card";
     card.type = "button";
     card.dataset.upgradeId = upgrade.id;
-    card.disabled = owned || !canAfford;
+    card.dataset.shopTier = String(shopTier);
+    card.disabled = owned || !canAfford || !tierUnlocked;
     card.addEventListener("click", () => {
       this.audio.playSfx("buttonClick");
       this.buyUpgrade(upgrade.id);
@@ -2780,7 +2898,7 @@ export class Game {
 
     if (owned) {
       card.classList.add("is-owned");
-    } else if (!canAfford) {
+    } else if (!canAfford || !tierUnlocked) {
       card.classList.add("is-locked");
     }
 
@@ -2789,7 +2907,7 @@ export class Game {
 
     const cost = document.createElement("span");
     cost.className = "upgrade-cost";
-    cost.textContent = owned ? "Owned" : `$${upgrade.cost}`;
+    cost.textContent = owned ? "Owned" : `$${upgrade.cost} - tier ${shopTier}`;
 
     const description = document.createElement("p");
     description.textContent = upgrade.description;
@@ -2800,7 +2918,13 @@ export class Game {
 
     const status = document.createElement("span");
     status.className = "upgrade-status";
-    status.textContent = owned ? "Installed" : canAfford ? "Buy" : "Need more money";
+    status.textContent = owned
+      ? "Installed"
+      : !tierUnlocked
+        ? `Reach shop tier ${shopTier}`
+        : canAfford
+          ? "Buy"
+          : "Need more money";
 
     card.append(name, cost, description, effect, status);
     return card;
@@ -2886,7 +3010,8 @@ export class Game {
 
   private getEnemyBadgeText(): string {
     const rules = this.getDuelRules();
-    return `${this.selectedEnemy.name} - ${rules.modifierName} - $${rules.reward}`;
+    const prefix = this.selectedContract.isBoss ? "BOSS" : this.selectedTown.name;
+    return `${prefix}: ${this.selectedEnemy.name} - ${rules.modifierName} - $${rules.reward}`;
   }
 
   private getPhaseText(): string {
@@ -2985,6 +3110,12 @@ export class Game {
       return "";
     }
 
+    const campaignCompletionText = this.getCampaignCompletionText();
+
+    if (campaignCompletionText) {
+      return campaignCompletionText;
+    }
+
     const styleBonus = this.state.result.stats.styleBonusText;
 
     if (styleBonus) {
@@ -3000,6 +3131,15 @@ export class Game {
     }
 
     return `Reason: ${this.state.result.reason}.`;
+  }
+
+  private getCampaignCompletionText(): string {
+    const townUnlocked =
+      this.lastCampaignChanges.find((change) => change.type === "town-unlocked") ??
+      this.lastCampaignChanges.find((change) => change.type === "town-completed") ??
+      this.lastCampaignChanges.find((change) => change.type === "boss-unlocked");
+
+    return townUnlocked?.message ?? "";
   }
 
   private getUpgradeHelpText(): string {
@@ -3064,6 +3204,16 @@ export class Game {
       rows.push(["Reward Multiplier", `x${stats.modifierRewardMultiplier.toFixed(2)}`]);
     }
 
+    if (this.lastCampaignReward > 0) {
+      rows.push(["Town Reward", `$${this.lastCampaignReward}`]);
+    }
+
+    const campaignText = this.getCampaignChangeSummaryText();
+
+    if (campaignText) {
+      rows.push(["Campaign", campaignText]);
+    }
+
     if (stats.modifierResultText) {
       rows.push(["Modifier Effect", stats.modifierResultText]);
     }
@@ -3117,6 +3267,7 @@ export class Game {
       if (
         label === "Style Bonus" ||
         label === "Behavior" ||
+        label === "Campaign" ||
         label === "Modifier Effect" ||
         label === "Consequence" ||
         label === "Active Conditions" ||
@@ -3144,6 +3295,21 @@ export class Game {
 
 function randomRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
+}
+
+function getUpgradeShopTier(upgradeId: UpgradeId): number {
+  switch (upgradeId) {
+    case "lightweight-revolver":
+      return 1;
+    case "steady-grip":
+      return 2;
+    case "focus-breathing":
+      return 3;
+    case "eagle-eye":
+      return 4;
+    case "lucky-charm":
+      return 5;
+  }
 }
 
 function getDrawPoseTarget(

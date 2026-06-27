@@ -9,6 +9,14 @@ import {
   type UpgradeDefinition,
   type UpgradeId
 } from "../data/upgrades";
+import type { BountyContractDefinition } from "../data/duelModifiers";
+import {
+  createDefaultCampaignState,
+  parseCampaignState,
+  settleCampaignDuel,
+  type CampaignChange,
+  type CampaignState
+} from "./campaign";
 import type { DuelOutcome, DuelResult } from "./state";
 
 export interface ActiveCondition {
@@ -21,6 +29,7 @@ export interface PlayerProgression {
   money: number;
   ownedUpgrades: UpgradeId[];
   activeConditions: ActiveCondition[];
+  campaign: CampaignState;
   duelsWon: number;
   duelsLost: number;
   selectedEnemyId: string;
@@ -61,6 +70,8 @@ export type RepairConditionResult =
 export interface DuelProgressionResult {
   progression: PlayerProgression;
   conditionChanges: ConditionChange[];
+  campaignChanges: CampaignChange[];
+  campaignReward: number;
 }
 
 export interface DuelConsequenceInput {
@@ -68,6 +79,7 @@ export interface DuelConsequenceInput {
   reward: number;
   selectedEnemyId: string;
   modifierId: string;
+  contract?: BountyContractDefinition;
 }
 
 export const PROGRESSION_STORAGE_KEY = "high-noon-duel:progression:v1";
@@ -77,6 +89,7 @@ export function createDefaultProgression(): PlayerProgression {
     money: 0,
     ownedUpgrades: [],
     activeConditions: [],
+    campaign: createDefaultCampaignState(),
     duelsWon: 0,
     duelsLost: 0,
     selectedEnemyId: DEFAULT_ENEMY.id
@@ -153,6 +166,13 @@ export function settleDuelProgression(
     input.reward,
     input.selectedEnemyId
   );
+  const campaignResult = input.contract
+    ? settleCampaignDuel(recorded.campaign, input.contract, input.result)
+    : {
+        campaign: recorded.campaign,
+        changes: [],
+        completionReward: 0
+      };
   const advanced = advanceActiveConditions(recorded.activeConditions);
   const conditionId = determineConditionGain(input.result, input.modifierId);
   let activeConditions = advanced.conditions;
@@ -167,9 +187,13 @@ export function settleDuelProgression(
   return {
     progression: {
       ...recorded,
+      money: recorded.money + campaignResult.completionReward,
+      campaign: campaignResult.campaign,
       activeConditions
     },
-    conditionChanges
+    conditionChanges,
+    campaignChanges: campaignResult.changes,
+    campaignReward: campaignResult.completionReward
   };
 }
 
@@ -406,6 +430,7 @@ function parseProgression(value: unknown): PlayerProgression | null {
     money: readNonNegativeInteger(value.money),
     ownedUpgrades,
     activeConditions: parseActiveConditions(value.activeConditions),
+    campaign: parseCampaignState(value.campaign),
     duelsWon: readNonNegativeInteger(value.duelsWon),
     duelsLost: readNonNegativeInteger(value.duelsLost),
     selectedEnemyId:
