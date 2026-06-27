@@ -65,10 +65,10 @@ export const AUDIO_MANIFEST: AudioManifest = {
     buttonClick: "/audio/sfx-button-click.wav"
   },
   music: {
-    bountyBoardLoop: "/audio/music-bounty-board-loop.wav",
+    bountyBoardLoop: "/audio/music/crossing-the-divide.mp3",
     townWindLoop: "/audio/music-town-wind-loop.wav",
-    duelTensionLoop: "/audio/music-duel-tension-loop.wav",
-    victorySting: "/audio/music-victory-sting.wav",
-    defeatSting: "/audio/music-defeat-sting.wav"
+    duelTensionLoop: "/audio/music/smoking-gun.mp3",
+    victorySting: "/audio/music/cowboy-sting.mp3",
+    defeatSting: "/audio/music/western-streets.mp3"
   }
 };

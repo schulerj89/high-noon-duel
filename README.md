@@ -13,7 +13,7 @@ High Noon Duel is a stylized browser-based western quick draw game built with Th
 - Enemy-driven reaction time, accuracy, fakeout chance, reward, and visual styling.
 - Local progression with money, duel record, owned upgrades, and localStorage persistence.
 - Simple upgrade shop with five data-driven upgrades.
-- Local audio manager with checked-in placeholder voice, SFX, music, and graceful missing-file handling.
+- Local audio manager with checked-in voice, SFX, sourced western music, and graceful missing-file handling.
 - Mouse raycast hit zones for torso, head, and gun-hand disarm shots.
 - Miss handling with delayed enemy punish shot.
 - Result stats for reaction time, shot result, duel result, money earned, current money, and style bonuses.
@@ -71,13 +71,13 @@ The script reads `scripts/voice-lines.json`, skips existing files by default, an
 
 ## Local Audio Assets
 
-SFX and music placeholders are generated without external services:
+SFX and town wind ambience placeholders are generated without external services:
 
 ```bash
 npm run generate:audio
 ```
 
-This writes WAV files into `public/audio/`. The game uses local files only at runtime.
+This writes WAV files into `public/audio/`. Western music tracks are sourced MP3 files in `public/audio/music/`; see `public/audio/CREDITS.md` for attribution. The game uses local files only at runtime.
 
 ## Controls
 

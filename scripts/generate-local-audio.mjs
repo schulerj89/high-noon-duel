@@ -24,11 +24,7 @@ async function main() {
     ["sfx-body-hit.wav", createBodyHit()],
     ["sfx-poster-paper.wav", createPosterPaper()],
     ["sfx-button-click.wav", createButtonClick()],
-    ["music-bounty-board-loop.wav", createBountyBoardLoop()],
-    ["music-town-wind-loop.wav", createTownWindLoop()],
-    ["music-duel-tension-loop.wav", createDuelTensionLoop()],
-    ["music-victory-sting.wav", createVictorySting()],
-    ["music-defeat-sting.wav", createDefeatSting()]
+    ["music-town-wind-loop.wav", createTownWindLoop()]
   ];
 
   for (const [fileName, samples] of assets) {
@@ -144,63 +140,12 @@ function createButtonClick() {
   return normalize(samples, 0.5);
 }
 
-function createBountyBoardLoop() {
-  const duration = 14;
-  const samples = silence(duration);
-  add(samples, windBed(duration, 109, 0.16), 0);
-
-  const notes = [196, 247, 294, 330, 294, 247, 220, 196];
-  for (let i = 0; i < 16; i += 1) {
-    const note = notes[i % notes.length];
-    add(samples, pluck(note, 1.2, 0.28, 120 + i), i * 0.82);
-  }
-
-  add(samples, tone(duration, 98, 0.08, 4), 0);
-  return loopFade(normalize(samples, 0.72), 0.12);
-}
-
 function createTownWindLoop() {
   const duration = 18;
   const samples = silence(duration);
   add(samples, windBed(duration, 131, 0.34), 0);
   add(samples, whistleGust(duration, 880, 0.09), 0);
   return loopFade(normalize(samples, 0.6), 0.2);
-}
-
-function createDuelTensionLoop() {
-  const duration = 10;
-  const samples = silence(duration);
-  add(samples, windBed(duration, 149, 0.12), 0);
-
-  for (let time = 0.15; time < duration; time += 1.25) {
-    add(samples, pulse(0.42, 64, 0.44), time);
-  }
-
-  for (let time = 0.7; time < duration; time += 2.5) {
-    add(samples, pluck(147, 1.6, 0.16, Math.floor(time * 100)), time);
-  }
-
-  return loopFade(normalize(samples, 0.66), 0.12);
-}
-
-function createVictorySting() {
-  const samples = silence(2.7);
-  add(samples, pluck(294, 1.4, 0.36, 201), 0);
-  add(samples, pluck(370, 1.4, 0.32, 202), 0.18);
-  add(samples, pluck(440, 1.6, 0.34, 203), 0.36);
-  add(samples, tone(2.1, 147, 0.18, 3), 0.42);
-  add(samples, metallicClick(0.16, 980, 0.28, 204), 1.82);
-  return normalize(samples, 0.75);
-}
-
-function createDefeatSting() {
-  const samples = silence(2.9);
-  add(samples, tone(2.4, 130.81, 0.18, 8), 0);
-  add(samples, pluck(196, 1.2, 0.24, 211), 0.12);
-  add(samples, pluck(164.81, 1.4, 0.24, 212), 0.62);
-  add(samples, pluck(130.81, 1.8, 0.26, 213), 1.08);
-  add(samples, windBed(2.9, 214, 0.1), 0);
-  return normalize(samples, 0.7);
 }
 
 function metallicClick(duration, frequency, gain, seed) {
@@ -213,30 +158,9 @@ function metallicClick(duration, frequency, gain, seed) {
   });
 }
 
-function pluck(frequency, duration, gain, seed) {
-  const rng = createRandom(seed);
-
-  return makeSamples(duration, (t) => {
-    const envelope = Math.exp(-t * 3.2) * (1 - Math.exp(-t * 80));
-    const string =
-      Math.sin(TAU * frequency * t) +
-      Math.sin(TAU * frequency * 2.01 * t) * 0.34 +
-      Math.sin(TAU * frequency * 3.02 * t) * 0.12;
-
-    return (string + (rng() * 2 - 1) * 0.045) * envelope * gain;
-  });
-}
-
 function tone(duration, frequency, gain, attack) {
   return makeSamples(duration, (t) => {
     const envelope = (1 - Math.exp(-t * attack)) * Math.exp(-t * 0.35);
-    return Math.sin(TAU * frequency * t) * envelope * gain;
-  });
-}
-
-function pulse(duration, frequency, gain) {
-  return makeSamples(duration, (t) => {
-    const envelope = Math.exp(-t * 5) * (1 - Math.exp(-t * 40));
     return Math.sin(TAU * frequency * t) * envelope * gain;
   });
 }
