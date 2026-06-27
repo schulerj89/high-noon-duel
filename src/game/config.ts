@@ -7,13 +7,6 @@ export interface DuelTimingConfig {
   missPunishDelayMs: number;
 }
 
-export interface EnemyConfig {
-  name: string;
-  reactionTimeMs: number;
-  accuracy: number;
-  reward: number;
-}
-
 export interface CameraConfig {
   position: readonly [number, number, number];
   lookAt: readonly [number, number, number];
@@ -22,7 +15,6 @@ export interface CameraConfig {
 
 export interface GameConfig {
   timing: DuelTimingConfig;
-  enemy: EnemyConfig;
   camera: CameraConfig;
 }
 
@@ -34,12 +26,6 @@ export const GAME_CONFIG = {
     drawPauseMaxMs: 2000,
     muzzleFlashMs: 85,
     missPunishDelayMs: 320
-  },
-  enemy: {
-    name: "Silas Crowe",
-    reactionTimeMs: 720,
-    accuracy: 0.72,
-    reward: 150
   },
   camera: {
     position: [0, 2.15, 6.2],

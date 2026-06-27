@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { DEFAULT_ENEMY, ENEMIES, type EnemyDefinition } from "../data/enemies";
 import { GAME_CONFIG } from "./config";
 import {
   formatShotResult,
@@ -29,11 +30,27 @@ interface UiElements {
   stats: HTMLDivElement;
   result: HTMLDivElement;
   enemyName: HTMLSpanElement;
+  bountyBoard: HTMLDivElement;
   actionButton: HTMLButtonElement;
+  backButton: HTMLButtonElement;
   crosshair: HTMLDivElement;
 }
 
 type Vec3Tuple = [number, number, number];
+type DuelLossReason = "enemy was faster" | "missed shot";
+
+interface FakeoutWindow {
+  startsAt: number;
+  endsAt: number;
+  intensity: number;
+}
+
+interface EnemyMaterials {
+  coat: THREE.MeshStandardMaterial;
+  shirt: THREE.MeshStandardMaterial;
+  hat: THREE.MeshStandardMaterial;
+  skin: THREE.MeshStandardMaterial;
+}
 
 export class Game {
   private readonly root: HTMLElement;
@@ -50,11 +67,13 @@ export class Game {
 
   private state: DuelState = createIntroDuelState(performance.now());
   private timing: CountdownTiming = this.createRoundTiming();
+  private selectedEnemy: EnemyDefinition = DEFAULT_ENEMY;
   private resizeObserver: ResizeObserver | null = null;
   private animationFrameId: number | null = null;
-  private enemyReactionMs = GAME_CONFIG.enemy.reactionTimeMs;
+  private enemyReactionMs: number = DEFAULT_ENEMY.reactionTimeMs;
   private enemyFireAt: number | null = null;
   private missLossAt: number | null = null;
+  private fakeouts: FakeoutWindow[] = [];
   private enemyHasFired = false;
   private hitBoxesVisible = false;
   private lastPlayerShotAt: number | null = null;
@@ -62,6 +81,7 @@ export class Game {
   private lastMissAt: number | null = null;
   private enemyGroup: THREE.Group | null = null;
   private enemyGunArm: THREE.Group | null = null;
+  private enemyMaterials: EnemyMaterials | null = null;
   private gunGroup: THREE.Group | null = null;
   private muzzleFlash: THREE.Mesh | null = null;
   private enemyMuzzleFlash: THREE.Mesh | null = null;
@@ -99,6 +119,7 @@ export class Game {
     this.root.append(this.viewport);
 
     this.buildScene();
+    this.renderBountyBoard();
     this.bindEvents();
     this.handleResize();
     this.updateOverlay();
@@ -119,6 +140,7 @@ export class Game {
     this.renderer.domElement.removeEventListener("pointerdown", this.handlePointerDown);
     window.removeEventListener("keydown", this.handleKeyDown);
     this.ui.actionButton.removeEventListener("click", this.startRound);
+    this.ui.backButton.removeEventListener("click", this.showBountyBoard);
     this.resizeObserver?.disconnect();
 
     this.scene.traverse((object) => {
@@ -164,9 +186,10 @@ export class Game {
     const now = performance.now();
     this.timing = this.createRoundTiming();
     this.state = startDuel(now, this.timing);
-    this.enemyReactionMs = GAME_CONFIG.enemy.reactionTimeMs;
+    this.enemyReactionMs = this.selectedEnemy.reactionTimeMs;
     this.enemyFireAt = null;
     this.missLossAt = null;
+    this.fakeouts = this.createFakeoutWindows(now, this.state.scheduledDrawAt);
     this.enemyHasFired = false;
     this.lastPlayerShotAt = null;
     this.lastEnemyShotAt = null;
@@ -181,7 +204,9 @@ export class Game {
     }
 
     if (this.enemyGroup) {
+      this.enemyGroup.position.set(0, 0, -5.7);
       this.enemyGroup.rotation.set(0, 0, 0);
+      this.enemyGroup.scale.setScalar(this.selectedEnemy.visual.scale);
     }
 
     if (this.enemyGunArm) {
@@ -195,6 +220,35 @@ export class Game {
     this.updateOverlay();
   };
 
+  private readonly showBountyBoard = (): void => {
+    this.state = createIntroDuelState(performance.now());
+    this.enemyFireAt = null;
+    this.missLossAt = null;
+    this.fakeouts = [];
+    this.enemyHasFired = false;
+    this.lastPlayerShotAt = null;
+    this.lastEnemyShotAt = null;
+    this.lastMissAt = null;
+
+    if (this.enemyGroup) {
+      this.enemyGroup.position.set(0, 0, -5.7);
+      this.enemyGroup.rotation.set(0, 0, 0);
+    }
+
+    if (this.enemyGunArm) {
+      this.enemyGunArm.rotation.z = -0.35;
+    }
+
+    this.updateEnemyVisual();
+    this.updateOverlay();
+  };
+
+  private selectEnemy(enemy: EnemyDefinition): void {
+    this.selectedEnemy = enemy;
+    this.updateEnemyVisual();
+    this.startRound();
+  }
+
   private createRoundTiming(): CountdownTiming {
     return {
       readyDurationMs: GAME_CONFIG.timing.readyDurationMs,
@@ -206,11 +260,38 @@ export class Game {
     };
   }
 
+  private createFakeoutWindows(roundStartedAt: number, scheduledDrawAt: number): FakeoutWindow[] {
+    if (this.selectedEnemy.fakeoutChance <= 0 || Math.random() > this.selectedEnemy.fakeoutChance) {
+      return [];
+    }
+
+    const availableMs = scheduledDrawAt - roundStartedAt - 450;
+
+    if (availableMs <= 500) {
+      return [];
+    }
+
+    const count = this.selectedEnemy.fakeoutChance > 0.55 ? 2 : 1;
+    const windows: FakeoutWindow[] = [];
+
+    for (let i = 0; i < count; i += 1) {
+      const startsAt = roundStartedAt + randomRange(450, availableMs);
+      windows.push({
+        startsAt,
+        endsAt: startsAt + randomRange(180, 270),
+        intensity: randomRange(0.65, 1)
+      });
+    }
+
+    return windows.sort((a, b) => a.startsAt - b.startsAt);
+  }
+
   private bindEvents(): void {
     this.renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
     this.renderer.domElement.addEventListener("pointerdown", this.handlePointerDown);
     window.addEventListener("keydown", this.handleKeyDown);
     this.ui.actionButton.addEventListener("click", this.startRound);
+    this.ui.backButton.addEventListener("click", this.showBountyBoard);
 
     this.resizeObserver = new ResizeObserver(this.handleResize);
     this.resizeObserver.observe(this.viewport);
@@ -273,7 +354,6 @@ export class Game {
 
   private handlePlayerInput(): void {
     if (this.state.phase === "intro") {
-      this.startRound();
       return;
     }
 
@@ -311,7 +391,7 @@ export class Game {
       this.missLossAt = getMissPunishFireAt(
         now,
         this.enemyFireAt ?? getEnemyFireAt(this.state.stats.drawAt ?? now, this.enemyReactionMs),
-        GAME_CONFIG.timing.missPunishDelayMs
+        this.getMissPunishDelayMs()
       );
       this.updateOverlay();
       return;
@@ -337,7 +417,11 @@ export class Game {
     }
   }
 
-  private resolveEnemyFire(reason: "enemy was faster" | "missed shot", firedAt: number): void {
+  private getMissPunishDelayMs(): number {
+    return GAME_CONFIG.timing.missPunishDelayMs + (1 - this.selectedEnemy.accuracy) * 360;
+  }
+
+  private resolveEnemyFire(reason: DuelLossReason, firedAt: number): void {
     if (this.enemyHasFired) {
       return;
     }
@@ -413,13 +497,19 @@ export class Game {
 
   private updateEnemyPose(delta: number): void {
     const ease = 1 - Math.exp(-delta * 12);
+    const now = performance.now();
+    const fakeoutIntensity = this.getFakeoutIntensity(now);
 
     if (this.enemyGunArm) {
       let targetRotation = -0.35;
 
+      if (fakeoutIntensity > 0) {
+        targetRotation = THREE.MathUtils.lerp(-0.35, -0.92, fakeoutIntensity);
+      }
+
       if (this.state.phase === "draw" || this.state.phase === "missed") {
         const drawAt = this.state.stats.drawAt ?? this.state.scheduledDrawAt;
-        const elapsed = performance.now() - drawAt;
+        const elapsed = now - drawAt;
         const drawProgress = THREE.MathUtils.clamp(elapsed / Math.max(1, this.enemyReactionMs), 0, 1);
         targetRotation = THREE.MathUtils.lerp(-0.35, -1.42, drawProgress);
       }
@@ -438,12 +528,37 @@ export class Game {
     if (this.enemyGroup) {
       const playerWon = this.state.result?.outcome === "win";
       const targetTilt = playerWon ? -0.18 : 0;
+      const targetLean =
+        this.state.phase === "draw" || this.state.phase === "missed"
+          ? this.selectedEnemy.visual.drawLeanDistance
+          : 0;
+
+      this.enemyGroup.position.x = THREE.MathUtils.lerp(
+        this.enemyGroup.position.x,
+        targetLean,
+        ease
+      );
       this.enemyGroup.rotation.z = THREE.MathUtils.lerp(
         this.enemyGroup.rotation.z,
         targetTilt,
         ease
       );
     }
+  }
+
+  private getFakeoutIntensity(now: number): number {
+    if (this.state.phase === "draw" || this.state.phase === "missed" || this.state.phase === "resolved") {
+      return 0;
+    }
+
+    for (const fakeout of this.fakeouts) {
+      if (now >= fakeout.startsAt && now <= fakeout.endsAt) {
+        const progress = (now - fakeout.startsAt) / (fakeout.endsAt - fakeout.startsAt);
+        return Math.sin(progress * Math.PI) * fakeout.intensity;
+      }
+    }
+
+    return 0;
   }
 
   private updateGunPose(now: number): void {
@@ -641,10 +756,16 @@ export class Game {
     group.position.set(0, 0, -5.7);
 
     const bootMaterial = new THREE.MeshStandardMaterial({ color: "#1f1b1a", roughness: 0.8 });
-    const coatMaterial = new THREE.MeshStandardMaterial({ color: "#4b2d2a", roughness: 0.82 });
-    const shirtMaterial = new THREE.MeshStandardMaterial({ color: "#d2a76a", roughness: 0.78 });
-    const skinMaterial = new THREE.MeshStandardMaterial({ color: "#b98055", roughness: 0.72 });
-    const hatMaterial = new THREE.MeshStandardMaterial({ color: "#322520", roughness: 0.9 });
+    const coatMaterial = new THREE.MeshStandardMaterial({ color: this.selectedEnemy.visual.coatColor, roughness: 0.82 });
+    const shirtMaterial = new THREE.MeshStandardMaterial({ color: this.selectedEnemy.visual.shirtColor, roughness: 0.78 });
+    const skinMaterial = new THREE.MeshStandardMaterial({ color: this.selectedEnemy.visual.skinColor, roughness: 0.72 });
+    const hatMaterial = new THREE.MeshStandardMaterial({ color: this.selectedEnemy.visual.hatColor, roughness: 0.9 });
+    this.enemyMaterials = {
+      coat: coatMaterial,
+      shirt: shirtMaterial,
+      hat: hatMaterial,
+      skin: skinMaterial
+    };
 
     const leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.9, 0.22), bootMaterial);
     leftLeg.position.set(-0.18, 0.45, 0);
@@ -723,6 +844,20 @@ export class Game {
     this.enemyGroup = group;
     this.enemyGunArm = gunArm;
     this.enemyMuzzleFlash = flash;
+    this.updateEnemyVisual();
+  }
+
+  private updateEnemyVisual(): void {
+    if (this.enemyMaterials) {
+      this.enemyMaterials.coat.color.set(this.selectedEnemy.visual.coatColor);
+      this.enemyMaterials.shirt.color.set(this.selectedEnemy.visual.shirtColor);
+      this.enemyMaterials.hat.color.set(this.selectedEnemy.visual.hatColor);
+      this.enemyMaterials.skin.color.set(this.selectedEnemy.visual.skinColor);
+    }
+
+    if (this.enemyGroup && this.state.phase === "intro") {
+      this.enemyGroup.scale.setScalar(this.selectedEnemy.visual.scale);
+    }
   }
 
   private addHitZones(enemyGroup: THREE.Group, gunArm: THREE.Group): void {
@@ -873,10 +1008,13 @@ export class Game {
     enemyBadge.textContent = "Wanted: ";
 
     const enemyName = document.createElement("span");
-    enemyName.textContent = `${GAME_CONFIG.enemy.name} - $${GAME_CONFIG.enemy.reward}`;
+    enemyName.textContent = this.getEnemyBadgeText();
     enemyBadge.append(enemyName);
 
     topBar.append(title, enemyBadge);
+
+    const bountyBoard = document.createElement("div");
+    bountyBoard.className = "bounty-board";
 
     const phaseLabel = document.createElement("div");
     phaseLabel.className = "phase-label";
@@ -893,12 +1031,21 @@ export class Game {
     const actionButton = document.createElement("button");
     actionButton.className = "duel-button";
     actionButton.type = "button";
-    actionButton.textContent = "Start Duel";
+    actionButton.textContent = "Restart Duel";
+
+    const backButton = document.createElement("button");
+    backButton.className = "duel-button secondary";
+    backButton.type = "button";
+    backButton.textContent = "Back to Bounty Board";
+
+    const actions = document.createElement("div");
+    actions.className = "duel-actions";
+    actions.append(actionButton, backButton);
 
     const crosshair = document.createElement("div");
     crosshair.className = "crosshair";
 
-    overlay.append(topBar, phaseLabel, detail, stats, result, actionButton, crosshair);
+    overlay.append(topBar, bountyBoard, phaseLabel, detail, stats, result, actions, crosshair);
 
     return {
       overlay,
@@ -907,25 +1054,82 @@ export class Game {
       stats,
       result,
       enemyName,
+      bountyBoard,
       actionButton,
+      backButton,
       crosshair
     };
   }
 
+  private renderBountyBoard(): void {
+    this.ui.bountyBoard.replaceChildren();
+
+    const heading = document.createElement("div");
+    heading.className = "bounty-heading";
+
+    const title = document.createElement("h1");
+    title.textContent = "Bounty Board";
+
+    const copy = document.createElement("p");
+    copy.textContent = "Choose a duel. Faster enemies pay better, but their tells are meaner.";
+
+    heading.append(title, copy);
+
+    const list = document.createElement("div");
+    list.className = "bounty-list";
+
+    for (const enemy of ENEMIES) {
+      const card = document.createElement("button");
+      card.className = "bounty-card";
+      card.type = "button";
+      card.dataset.enemyId = enemy.id;
+      card.addEventListener("click", () => this.selectEnemy(enemy));
+
+      const name = document.createElement("strong");
+      name.textContent = enemy.name;
+
+      const titleEl = document.createElement("span");
+      titleEl.className = "bounty-title";
+      titleEl.textContent = enemy.title;
+
+      const meta = document.createElement("span");
+      meta.className = "bounty-meta";
+      meta.textContent = `${enemy.difficultyHint} - $${enemy.reward}`;
+
+      const description = document.createElement("p");
+      description.textContent = enemy.description;
+
+      const tell = document.createElement("small");
+      tell.textContent = enemy.preferredTell;
+
+      card.append(name, titleEl, meta, description, tell);
+      list.append(card);
+    }
+
+    this.ui.bountyBoard.append(heading, list);
+  }
+
   private updateOverlay(): void {
-    this.ui.enemyName.textContent = `${GAME_CONFIG.enemy.name} - $${GAME_CONFIG.enemy.reward}`;
+    const isBoard = this.state.phase === "intro";
+
+    this.ui.enemyName.textContent = this.getEnemyBadgeText();
+    this.ui.bountyBoard.hidden = !isBoard;
+    this.ui.phaseLabel.hidden = isBoard;
+    this.ui.detail.hidden = isBoard;
     this.ui.phaseLabel.textContent = this.getPhaseText();
     this.ui.phaseLabel.dataset.phase = this.state.result?.outcome ?? this.state.phase;
     this.ui.detail.textContent = this.getDetailText();
     this.ui.result.textContent = this.getResultText();
-    this.ui.actionButton.hidden =
-      this.state.phase !== "intro" && this.state.phase !== "resolved";
-    this.ui.actionButton.textContent =
-      this.state.phase === "resolved" ? "Restart Duel" : "Start Duel";
+    this.ui.actionButton.hidden = this.state.phase !== "resolved";
+    this.ui.backButton.hidden = this.state.phase !== "resolved";
     this.ui.crosshair.classList.toggle("is-visible", this.state.phase === "draw");
     this.ui.crosshair.classList.toggle("is-hot", this.state.phase === "draw");
     this.viewport.classList.toggle("is-aiming", this.state.phase === "draw");
     this.renderStats();
+  }
+
+  private getEnemyBadgeText(): string {
+    return `${this.selectedEnemy.name} - $${this.selectedEnemy.reward}`;
   }
 
   private getPhaseText(): string {
@@ -939,7 +1143,7 @@ export class Game {
 
     switch (this.state.phase) {
       case "intro":
-        return "HIGH NOON";
+        return "BOUNTY BOARD";
       case "ready":
         return "READY";
       case "steady":
@@ -957,7 +1161,7 @@ export class Game {
 
   private getDetailText(): string {
     if (this.state.phase === "intro") {
-      return `Face ${GAME_CONFIG.enemy.name}.`;
+      return `Choose ${this.selectedEnemy.name}.`;
     }
 
     if (this.state.phase === "draw") {
@@ -1027,11 +1231,13 @@ export class Game {
     }
 
     const stats = this.state.result.stats;
+    const reward = this.state.result.outcome === "win" ? `$${this.selectedEnemy.reward}` : "$0";
     const rows: Array<[string, string]> = [
       ["Duel Result", this.state.result.outcome.toUpperCase()],
       ["Shot Result", formatShotResult(stats.shotResult)],
       ["Reaction Time", formatDuration(stats.playerReactionTimeMs)],
-      ["Enemy Reaction", formatDuration(stats.enemyReactionTimeMs)]
+      ["Enemy Reaction", formatDuration(stats.enemyReactionTimeMs)],
+      ["Reward", reward]
     ];
 
     if (stats.styleBonusText) {
