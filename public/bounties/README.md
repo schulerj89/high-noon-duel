@@ -1,6 +1,8 @@
 # Bounty Portraits
 
-These portraits are generated bitmap assets for the bounty board. They are intentionally image-only portraits; poster text such as WANTED, enemy name, reward, difficulty, and description is rendered by the game UI from `src/data/enemies.ts`.
+These portraits are GPT Image 2 generated bitmap assets for the bounty board. They are intentionally image-only portraits; poster text such as WANTED, enemy name, reward, difficulty, and description is rendered by the game UI from `src/data/enemies.ts`.
+
+The game also keeps data-driven procedural portrait settings in `src/data/enemies.ts` and renders a CSS silhouette fallback if one of these image files is missing.
 
 Current files:
 

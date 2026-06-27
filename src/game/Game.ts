@@ -1532,6 +1532,14 @@ export class Game {
   private createEnemyPortrait(enemy: EnemyDefinition): HTMLSpanElement {
     const portrait = document.createElement("span");
     portrait.className = "poster-portrait";
+    portrait.style.setProperty("--portrait-ink", enemy.portrait.palette.ink);
+    portrait.style.setProperty("--portrait-shadow", enemy.portrait.palette.shadow);
+    portrait.style.setProperty("--portrait-accent", enemy.portrait.palette.accent);
+    portrait.style.setProperty("--portrait-hat", enemy.portrait.palette.hat);
+    portrait.style.setProperty("--portrait-coat", enemy.portrait.palette.coat);
+    portrait.style.setProperty("--portrait-skin", enemy.portrait.palette.skin);
+
+    const fallback = this.createProceduralPortrait(enemy);
 
     const image = document.createElement("img");
     image.className = "poster-portrait-image";
@@ -1539,9 +1547,69 @@ export class Game {
     image.alt = `${enemy.name} portrait`;
     image.decoding = "async";
     image.loading = "eager";
+    image.addEventListener(
+      "error",
+      () => {
+        image.hidden = true;
+        portrait.classList.add("is-fallback-active");
+      },
+      { once: true }
+    );
 
-    portrait.append(image);
+    portrait.append(fallback, image);
     return portrait;
+  }
+
+  private createProceduralPortrait(enemy: EnemyDefinition): HTMLSpanElement {
+    const fallback = document.createElement("span");
+    fallback.className = "poster-portrait-fallback";
+    fallback.dataset.hat = enemy.portrait.procedural.hatType;
+    fallback.dataset.body = enemy.portrait.procedural.bodyShape;
+    fallback.dataset.face = enemy.portrait.procedural.faceShape;
+    fallback.setAttribute("aria-hidden", "true");
+
+    const parts = [
+      "portrait-halo",
+      "portrait-body",
+      "portrait-coat",
+      "portrait-poncho",
+      "portrait-neck",
+      "portrait-face",
+      "portrait-eyes",
+      "portrait-bandana",
+      "portrait-scar",
+      "portrait-eye-patch",
+      "portrait-hat"
+    ];
+
+    for (const className of parts) {
+      const part = document.createElement("span");
+      part.className = className;
+
+      if (className === "portrait-coat") {
+        part.hidden = !enemy.portrait.procedural.hasCoat;
+      }
+
+      if (className === "portrait-poncho") {
+        part.hidden = !enemy.portrait.procedural.hasPoncho;
+      }
+
+      if (className === "portrait-bandana") {
+        part.hidden = !enemy.portrait.procedural.hasBandana;
+      }
+
+      if (className === "portrait-scar") {
+        part.hidden = !enemy.portrait.procedural.hasScar;
+      }
+
+      if (className === "portrait-eye-patch") {
+        part.hidden = !enemy.portrait.procedural.hasEyePatch;
+      }
+
+      fallback.append(part);
+    }
+
+    return fallback;
   }
 
   private createBoardModeButton(label: string, mode: BoardMode): HTMLButtonElement {
