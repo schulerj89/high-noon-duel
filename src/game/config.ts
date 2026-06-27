@@ -1,10 +1,12 @@
 export interface DuelTimingConfig {
+  standoffDurationMs: number;
   readyDurationMs: number;
   steadyDurationMs: number;
   drawPauseMinMs: number;
   drawPauseMaxMs: number;
   muzzleFlashMs: number;
   missPunishDelayMs: number;
+  hitPauseMs: number;
 }
 
 export interface CameraConfig {
@@ -20,12 +22,14 @@ export interface GameConfig {
 
 export const GAME_CONFIG = {
   timing: {
+    standoffDurationMs: 1150,
     readyDurationMs: 900,
     steadyDurationMs: 900,
     drawPauseMinMs: 700,
     drawPauseMaxMs: 2000,
-    muzzleFlashMs: 85,
-    missPunishDelayMs: 320
+    muzzleFlashMs: 105,
+    missPunishDelayMs: 320,
+    hitPauseMs: 95
   },
   camera: {
     position: [0, 2.15, 6.2],

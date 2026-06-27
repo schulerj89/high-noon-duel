@@ -82,6 +82,13 @@ export interface EnemyMotionConfig {
   disarmJerk: number;
 }
 
+export interface EnemyDialogueConfig {
+  introLines: readonly string[];
+  fakeoutLines?: readonly string[];
+  loseLines?: readonly string[];
+  winLines?: readonly string[];
+}
+
 export interface EnemyDefinition {
   id: string;
   name: string;
@@ -96,6 +103,7 @@ export interface EnemyDefinition {
   weakZones: readonly ShotResult[];
   visual: EnemyVisualConfig;
   portrait: EnemyPortraitConfig;
+  dialogue: EnemyDialogueConfig;
 }
 
 export const ENEMIES = [
@@ -175,6 +183,20 @@ export const ENEMIES = [
         coat: "#7a5b38",
         skin: "#bd8558"
       }
+    },
+    dialogue: {
+      introLines: [
+        "I ain't scared. Not much, anyway.",
+        "My hand's steady enough."
+      ],
+      loseLines: [
+        "I knew I should've stayed home.",
+        "That was faster than a rattler."
+      ],
+      winLines: [
+        "I did it? I mean, I meant to do that.",
+        "Guess my hand was steady enough."
+      ]
     }
   },
   {
@@ -253,6 +275,24 @@ export const ENEMIES = [
         coat: "#8e342f",
         skin: "#a96d4b"
       }
+    },
+    dialogue: {
+      introLines: [
+        "Blink and you're buried.",
+        "You watching my hand, friend?"
+      ],
+      fakeoutLines: [
+        "Too quick for you?",
+        "Eyes up."
+      ],
+      loseLines: [
+        "Should've blinked.",
+        "Lucky shot."
+      ],
+      winLines: [
+        "Told you not to blink.",
+        "You watched the wrong hand."
+      ]
     }
   },
   {
@@ -331,6 +371,23 @@ export const ENEMIES = [
         coat: "#2f3d46",
         skin: "#b77b52"
       }
+    },
+    dialogue: {
+      introLines: [
+        "I've seen faster men fall slower.",
+        "Steady now."
+      ],
+      fakeoutLines: [
+        "Hold."
+      ],
+      loseLines: [
+        "Clean draw. Fair enough.",
+        "That'll do."
+      ],
+      winLines: [
+        "Lesson's over.",
+        "You rushed it."
+      ]
     }
   },
   {
@@ -409,6 +466,24 @@ export const ENEMIES = [
         coat: "#3f4563",
         skin: "#9f6c52"
       }
+    },
+    dialogue: {
+      introLines: [
+        "The dust sees everything.",
+        "One breath. One bullet."
+      ],
+      fakeoutLines: [
+        "There.",
+        "Did the wind move?"
+      ],
+      loseLines: [
+        "Dust take me.",
+        "You read the wind."
+      ],
+      winLines: [
+        "The dust told me first.",
+        "One breath was all I needed."
+      ]
     }
   },
   {
@@ -487,6 +562,24 @@ export const ENEMIES = [
         coat: "#171514",
         skin: "#9b6847"
       }
+    },
+    dialogue: {
+      introLines: [
+        "You already lost.",
+        "Draw, if you came to die."
+      ],
+      fakeoutLines: [
+        "Now.",
+        "Too late."
+      ],
+      loseLines: [
+        "This changes nothing.",
+        "Enjoy the breath you bought."
+      ],
+      winLines: [
+        "I told you.",
+        "High noon ends here."
+      ]
     }
   }
 ] as const satisfies readonly EnemyDefinition[];

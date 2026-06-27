@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import { AudioManager } from "../audio/AudioManager";
+import type { VoiceAudioId } from "../audio/audioManifest";
 import { DEFAULT_ENEMY, ENEMIES, type EnemyDefinition } from "../data/enemies";
 import { UPGRADES, type UpgradeDefinition, type UpgradeId } from "../data/upgrades";
+import { getCameraPresentation } from "../scene/cameraPresentation";
 import { createEnemy } from "../scene/createEnemy";
 import { updateEnemyMaterials } from "../scene/enemyMaterials";
 import { resetEnemyRigPose, type EnemyRig } from "../scene/enemyRig";
@@ -46,8 +48,12 @@ interface UiElements {
   overlay: HTMLDivElement;
   phaseLabel: HTMLDivElement;
   detail: HTMLDivElement;
+  subtitle: HTMLDivElement;
+  subtitleSpeaker: HTMLSpanElement;
+  subtitleLine: HTMLSpanElement;
   stats: HTMLDivElement;
   result: HTMLDivElement;
+  rewardToast: HTMLDivElement;
   enemyName: HTMLSpanElement;
   bountyBoard: HTMLDivElement;
   actionButton: HTMLButtonElement;
@@ -88,6 +94,31 @@ interface PlayerShotTiming {
   luckyCharmTriggered: boolean;
 }
 
+interface SubtitleState {
+  speaker: string;
+  line: string;
+  expiresAt: number;
+  tone: "neutral" | "enemy" | "result";
+}
+
+type EnemyDialogueKind = "intro" | "fakeout" | "lose" | "win";
+
+const VOICE_SUBTITLES = {
+  ready: "Ready...",
+  steady: "Steady...",
+  draw: "Draw!",
+  tooSoon: "Too soon, partner.",
+  cleanShot: "Clean shot.",
+  miss: "You missed!",
+  enemyFaster: "He beat you to the iron.",
+  bountyClaimed: "Bounty claimed.",
+  tryAgainPartner: "Try again, partner.",
+  disarm: "Disarmed!",
+  headshot: "Dead center.",
+  welcomeBoard: "Pick your bounty.",
+  shopWelcome: "Spend wisely."
+} satisfies Record<VoiceAudioId, string>;
+
 export class Game {
   private readonly root: HTMLElement;
   private readonly viewport: HTMLDivElement;
@@ -114,6 +145,7 @@ export class Game {
   private enemyFireAt: number | null = null;
   private missLossAt: number | null = null;
   private fakeouts: FakeoutWindow[] = [];
+  private spokenFakeoutStartsAt = new Set<number>();
   private enemyHasFired = false;
   private duelSettled = false;
   private hitBoxesVisible = false;
@@ -123,6 +155,12 @@ export class Game {
   private lastPlayerShotAt: number | null = null;
   private lastEnemyShotAt: number | null = null;
   private lastMissAt: number | null = null;
+  private hitPauseStartedAt: number | null = null;
+  private hitPauseUntil = 0;
+  private rewardToastText = "";
+  private rewardToastUntil = 0;
+  private subtitle: SubtitleState | null = null;
+  private readonly queuedSubtitleTimers = new Set<number>();
   private enemyRig: EnemyRig | null = null;
   private gunGroup: THREE.Group | null = null;
   private muzzleFlash: THREE.Mesh | null = null;
@@ -193,6 +231,7 @@ export class Game {
     this.ui.musicVolumeInput.removeEventListener("input", this.handleMusicVolumeInput);
     this.ui.sfxVolumeInput.removeEventListener("input", this.handleSfxVolumeInput);
     this.ui.voiceVolumeInput.removeEventListener("input", this.handleVoiceVolumeInput);
+    this.clearQueuedSubtitles();
     this.resizeObserver?.disconnect();
     this.audio.stopAll();
 
@@ -216,6 +255,9 @@ export class Game {
   private readonly tick = (): void => {
     const delta = this.clock.getDelta();
     const now = performance.now();
+    const hitPauseActive = now < this.hitPauseUntil;
+    const visualNow = hitPauseActive && this.hitPauseStartedAt !== null ? this.hitPauseStartedAt : now;
+    const visualDelta = hitPauseActive ? 0 : delta;
     const previousPhase = this.state.phase;
 
     this.state = advanceDuelState(this.state, now, this.timing);
@@ -229,8 +271,8 @@ export class Game {
 
     this.handleDuelPhaseAudio(previousPhase, this.state.phase);
     this.handleEnemyShot(now);
-    this.updateScene(now, delta);
-    this.updateOverlay();
+    this.updateScene(visualNow, visualDelta);
+    this.updateOverlay(now);
     this.renderer.render(this.scene, this.camera);
 
     this.animationFrameId = window.requestAnimationFrame(this.tick);
@@ -244,6 +286,7 @@ export class Game {
     this.enemyFireAt = null;
     this.missLossAt = null;
     this.fakeouts = this.createFakeoutWindows(now, this.state.scheduledDrawAt);
+    this.spokenFakeoutStartsAt.clear();
     this.enemyHasFired = false;
     this.duelSettled = false;
     this.lastMoneyEarned = 0;
@@ -252,6 +295,12 @@ export class Game {
     this.lastPlayerShotAt = null;
     this.lastEnemyShotAt = null;
     this.lastMissAt = null;
+    this.hitPauseStartedAt = null;
+    this.hitPauseUntil = 0;
+    this.rewardToastText = "";
+    this.rewardToastUntil = 0;
+    this.clearQueuedSubtitles();
+    this.clearSubtitle();
 
     if (this.muzzleFlash) {
       this.muzzleFlash.visible = false;
@@ -268,7 +317,7 @@ export class Game {
     this.updateHitZoneScale();
     this.updateHitBoxVisibility();
     this.playDuelStartAudio();
-    this.updateOverlay();
+    this.updateOverlay(now);
   };
 
   private readonly showBountyBoard = (): void => {
@@ -277,10 +326,17 @@ export class Game {
     this.enemyFireAt = null;
     this.missLossAt = null;
     this.fakeouts = [];
+    this.spokenFakeoutStartsAt.clear();
     this.enemyHasFired = false;
     this.lastPlayerShotAt = null;
     this.lastEnemyShotAt = null;
     this.lastMissAt = null;
+    this.hitPauseStartedAt = null;
+    this.hitPauseUntil = 0;
+    this.rewardToastText = "";
+    this.rewardToastUntil = 0;
+    this.clearQueuedSubtitles();
+    this.clearSubtitle();
 
     if (this.enemyRig) {
       resetEnemyRigPose(this.enemyRig);
@@ -289,7 +345,7 @@ export class Game {
     this.updateEnemyVisual();
     this.renderBountyBoard();
     this.playBountyBoardAudio();
-    this.updateOverlay();
+    this.updateOverlay(performance.now());
   };
 
   private selectEnemy(enemy: EnemyDefinition): void {
@@ -303,6 +359,7 @@ export class Game {
 
   private createRoundTiming(): CountdownTiming {
     return {
+      standoffDurationMs: GAME_CONFIG.timing.standoffDurationMs,
       readyDurationMs: GAME_CONFIG.timing.readyDurationMs,
       steadyDurationMs: GAME_CONFIG.timing.steadyDurationMs,
       drawPauseMs: randomRange(
@@ -506,6 +563,12 @@ export class Game {
       this.lastMissAt = now;
       this.showMissDust();
       this.audio.playSfx("dustImpact");
+      this.showSubtitle({
+        speaker: "Announcer",
+        line: "Shot wide.",
+        durationMs: 900,
+        tone: "result"
+      });
       this.state = recordPlayerMiss(this.state, now, baseShotScore);
       this.missLossAt = getMissPunishFireAt(
         now,
@@ -534,6 +597,8 @@ export class Game {
 
     this.lastLuckyCharmTriggered = timing.luckyCharmTriggered;
     this.audio.playSfx("bodyHit");
+    this.hitPauseStartedAt = now;
+    this.hitPauseUntil = now + GAME_CONFIG.timing.hitPauseMs;
     this.state = resolvePlayerHit(this.state, now, shotScore, this.enemyReactionMs);
 
     this.updateOverlay();
@@ -638,6 +703,11 @@ export class Game {
     this.lastMoneyEarned = reward;
     this.duelSettled = true;
     saveProgression(this.progression);
+
+    if (reward > 0) {
+      this.showRewardToast(reward);
+    }
+
     this.playDuelResultAudio();
     this.renderBountyBoard();
   }
@@ -688,13 +758,18 @@ export class Game {
       return;
     }
 
+    if (nextPhase === "ready") {
+      this.playVoiceWithSubtitle("ready");
+      return;
+    }
+
     if (nextPhase === "steady") {
-      this.audio.playVoice("steady");
+      this.playVoiceWithSubtitle("steady");
       return;
     }
 
     if (nextPhase === "draw") {
-      this.audio.playVoice("draw");
+      this.playVoiceWithSubtitle("draw", { durationMs: 850 });
       this.audio.playSfx("revolverCock");
     }
   }
@@ -708,7 +783,7 @@ export class Game {
       fadeInMs: 500,
       volume: 1
     });
-    this.audio.playVoice("welcomeBoard");
+    this.playVoiceWithSubtitle("welcomeBoard", { speaker: "Bounty Board", durationMs: 1500 });
   }
 
   private playDuelStartAudio(): void {
@@ -720,8 +795,8 @@ export class Game {
       fadeInMs: 450,
       volume: 1
     });
-    this.audio.playVoice("ready");
     this.audio.playSfx("holsterLeather");
+    this.playEnemyDialogue("intro", { durationMs: GAME_CONFIG.timing.standoffDurationMs + 250 });
   }
 
   private playDuelResultAudio(): void {
@@ -740,7 +815,8 @@ export class Game {
         restart: true,
         volume: 0.95
       });
-      this.audio.playVoice(this.getWinVoiceLineId());
+      this.playVoiceWithSubtitle(this.getWinVoiceLineId(), { durationMs: 1450 });
+      this.queueEnemyDialogue("lose", 850);
       return;
     }
 
@@ -752,21 +828,160 @@ export class Game {
     });
 
     if (result.reason === "early draw") {
-      this.audio.playVoice("tooSoon");
+      this.playVoiceWithSubtitle("tooSoon", { durationMs: 1400 });
+      this.queueEnemyDialogue("win", 850);
       return;
     }
 
     if (result.reason === "missed shot") {
-      this.audio.playVoice("miss");
+      this.playVoiceWithSubtitle("miss", { durationMs: 1300 });
+      this.queueEnemyDialogue("win", 850);
       return;
     }
 
     if (result.reason === "enemy was faster") {
-      this.audio.playVoice("enemyFaster");
+      this.playVoiceWithSubtitle("enemyFaster", { durationMs: 1500 });
+      this.queueEnemyDialogue("win", 850);
       return;
     }
 
-    this.audio.playVoice("tryAgainPartner");
+    this.playVoiceWithSubtitle("tryAgainPartner", { durationMs: 1400 });
+    this.queueEnemyDialogue("win", 850);
+  }
+
+  private playVoiceWithSubtitle(
+    id: VoiceAudioId,
+    options: { speaker?: string; durationMs?: number } = {}
+  ): void {
+    this.audio.playVoice(id);
+    this.showSubtitle({
+      speaker: options.speaker ?? "Announcer",
+      line: VOICE_SUBTITLES[id],
+      durationMs: options.durationMs ?? 1200,
+      tone: "result"
+    });
+  }
+
+  private playEnemyDialogue(
+    kind: EnemyDialogueKind,
+    options: { durationMs?: number } = {}
+  ): void {
+    const lines = this.getEnemyDialogueLines(kind);
+
+    if (lines.length === 0) {
+      return;
+    }
+
+    const lineIndex = Math.floor(Math.random() * lines.length);
+    const line = lines[lineIndex];
+    const audioId = `${this.selectedEnemy.id}-${kind}-${lineIndex + 1}`;
+    const audioUrl = `/audio/voice/enemies/${audioId}.mp3`;
+
+    this.audio.playVoiceFile(audioId, audioUrl);
+    this.showSubtitle({
+      speaker: this.selectedEnemy.name,
+      line,
+      durationMs: options.durationMs ?? 1600,
+      tone: "enemy"
+    });
+  }
+
+  private queueEnemyDialogue(kind: EnemyDialogueKind, delayMs: number): void {
+    if (this.getEnemyDialogueLines(kind).length === 0) {
+      return;
+    }
+
+    const timerId = window.setTimeout(() => {
+      this.queuedSubtitleTimers.delete(timerId);
+
+      if (this.state.phase === "resolved") {
+        this.playEnemyDialogue(kind, { durationMs: 1900 });
+      }
+    }, delayMs);
+
+    this.queuedSubtitleTimers.add(timerId);
+  }
+
+  private getEnemyDialogueLines(kind: EnemyDialogueKind): readonly string[] {
+    switch (kind) {
+      case "intro":
+        return this.selectedEnemy.dialogue.introLines;
+      case "fakeout":
+        return this.selectedEnemy.dialogue.fakeoutLines ?? [];
+      case "lose":
+        return this.selectedEnemy.dialogue.loseLines ?? [];
+      case "win":
+        return this.selectedEnemy.dialogue.winLines ?? [];
+    }
+  }
+
+  private showSubtitle(input: {
+    speaker: string;
+    line: string;
+    durationMs: number;
+    tone: SubtitleState["tone"];
+  }): void {
+    this.subtitle = {
+      speaker: input.speaker,
+      line: input.line,
+      tone: input.tone,
+      expiresAt: performance.now() + input.durationMs
+    };
+    this.updateSubtitle(performance.now());
+  }
+
+  private clearSubtitle(): void {
+    this.subtitle = null;
+    this.updateSubtitle(performance.now());
+  }
+
+  private clearQueuedSubtitles(): void {
+    for (const timerId of this.queuedSubtitleTimers) {
+      window.clearTimeout(timerId);
+    }
+
+    this.queuedSubtitleTimers.clear();
+  }
+
+  private updateSubtitle(now: number): void {
+    if (this.subtitle && now >= this.subtitle.expiresAt) {
+      this.subtitle = null;
+    }
+
+    const subtitle = this.subtitle;
+    this.ui.subtitle.hidden = subtitle === null;
+    this.ui.subtitle.classList.toggle("is-visible", subtitle !== null);
+
+    if (!subtitle) {
+      this.ui.subtitleSpeaker.textContent = "";
+      this.ui.subtitleLine.textContent = "";
+      this.ui.subtitle.dataset.tone = "neutral";
+      return;
+    }
+
+    this.ui.subtitleSpeaker.textContent = `${subtitle.speaker}:`;
+    this.ui.subtitleLine.textContent = subtitle.line;
+    this.ui.subtitle.dataset.tone = subtitle.tone;
+  }
+
+  private showRewardToast(reward: number): void {
+    this.rewardToastText = `+$${reward} bounty claimed`;
+    this.rewardToastUntil = performance.now() + 1700;
+    this.updateRewardToast(performance.now());
+  }
+
+  private updateRewardToast(now: number): void {
+    const visible = this.rewardToastText !== "" && now < this.rewardToastUntil;
+
+    this.ui.rewardToast.hidden = !visible;
+    this.ui.rewardToast.classList.toggle("is-visible", visible);
+
+    if (visible) {
+      this.ui.rewardToast.textContent = this.rewardToastText;
+      return;
+    }
+
+    this.ui.rewardToast.textContent = "";
   }
 
   private updateMuteButton(): void {
@@ -853,14 +1068,15 @@ export class Game {
       0.92 + THREE.MathUtils.clamp(this.pointer.y * 0.35, -0.22, 0.28),
       -5.9
     );
-    this.missDustGroup.scale.setScalar(0.55);
+    this.missDustGroup.scale.setScalar(0.7);
     this.missDustGroup.visible = true;
-    this.missDustMaterial.opacity = 0.72;
+    this.missDustMaterial.opacity = 0.82;
   }
 
   private updateScene(now: number, delta: number): void {
     this.updateCamera(now);
     this.updateEnemyPose(delta);
+    this.updateFakeoutDialogue(now);
     this.updateGunPose(now);
     this.updateFlash(this.muzzleFlash, this.lastPlayerShotAt, now);
     this.updateFlash(this.enemyMuzzleFlash, this.lastEnemyShotAt, now);
@@ -868,19 +1084,49 @@ export class Game {
     this.updateHitBoxVisibility();
   }
 
+  private updateFakeoutDialogue(now: number): void {
+    if (this.state.phase === "draw" || this.state.phase === "missed" || this.state.phase === "resolved") {
+      return;
+    }
+
+    for (const fakeout of this.fakeouts) {
+      if (
+        now >= fakeout.startsAt &&
+        now <= fakeout.endsAt &&
+        !this.spokenFakeoutStartsAt.has(fakeout.startsAt)
+      ) {
+        this.spokenFakeoutStartsAt.add(fakeout.startsAt);
+        this.playEnemyDialogue("fakeout", { durationMs: 1200 });
+        return;
+      }
+    }
+  }
+
   private updateCamera(now: number): void {
     const [baseX, baseY, baseZ] = GAME_CONFIG.camera.position;
-    const shakeWindowMs = 130;
     const lastShotAt = Math.max(this.lastPlayerShotAt ?? 0, this.lastEnemyShotAt ?? 0);
-    const shotAge = lastShotAt > 0 ? now - lastShotAt : Number.POSITIVE_INFINITY;
-    const shake = shotAge < shakeWindowMs ? (1 - shotAge / shakeWindowMs) * 0.035 : 0;
+    const presentation = getCameraPresentation({
+      phase: this.state.phase,
+      outcome: this.state.result?.outcome,
+      now,
+      roundStartedAt: this.state.roundStartedAt,
+      scheduledDrawAt: this.state.scheduledDrawAt,
+      lastShotAt: lastShotAt > 0 ? lastShotAt : undefined,
+      hitPauseActive: now < this.hitPauseUntil
+    });
 
     this.camera.position.set(
-      baseX + Math.sin(now * 0.07) * shake,
-      baseY + Math.cos(now * 0.09) * shake,
-      baseZ
+      baseX + presentation.positionOffset[0],
+      baseY + presentation.positionOffset[1],
+      baseZ + presentation.positionOffset[2]
     );
-    this.camera.lookAt(...GAME_CONFIG.camera.lookAt);
+    this.camera.fov = GAME_CONFIG.camera.fov + presentation.fovOffset;
+    this.camera.updateProjectionMatrix();
+    this.camera.lookAt(
+      GAME_CONFIG.camera.lookAt[0] + presentation.lookAtOffset[0],
+      GAME_CONFIG.camera.lookAt[1] + presentation.lookAtOffset[1],
+      GAME_CONFIG.camera.lookAt[2] + presentation.lookAtOffset[2]
+    );
   }
 
   private updateEnemyPose(delta: number): void {
@@ -1028,8 +1274,20 @@ export class Game {
     mesh.visible = visible;
 
     if (visible) {
-      const scale = 1 + (1 - age / GAME_CONFIG.timing.muzzleFlashMs) * 0.9;
+      const flashProgress = 1 - age / GAME_CONFIG.timing.muzzleFlashMs;
+      const scale = 1 + flashProgress * 1.55;
       mesh.scale.setScalar(scale);
+
+      const material = mesh.material;
+      const opacity = 0.35 + flashProgress * 0.65;
+
+      if (Array.isArray(material)) {
+        for (const item of material) {
+          item.opacity = opacity;
+        }
+      } else {
+        material.opacity = opacity;
+      }
     }
   }
 
@@ -1049,8 +1307,8 @@ export class Game {
 
     const progress = age / durationMs;
     this.missDustGroup.visible = true;
-    this.missDustGroup.scale.setScalar(0.55 + progress * 1.25);
-    this.missDustMaterial.opacity = (1 - progress) * 0.72;
+    this.missDustGroup.scale.setScalar(0.7 + progress * 1.65);
+    this.missDustMaterial.opacity = (1 - progress) * 0.82;
   }
 
   private buildScene(): void {
@@ -1482,11 +1740,27 @@ export class Game {
     const detail = document.createElement("div");
     detail.className = "phase-detail";
 
+    const subtitle = document.createElement("div");
+    subtitle.className = "subtitle-strip";
+    subtitle.hidden = true;
+
+    const subtitleSpeaker = document.createElement("span");
+    subtitleSpeaker.className = "subtitle-speaker";
+
+    const subtitleLine = document.createElement("span");
+    subtitleLine.className = "subtitle-line";
+
+    subtitle.append(subtitleSpeaker, subtitleLine);
+
     const stats = document.createElement("div");
     stats.className = "stats-panel";
 
     const result = document.createElement("div");
     result.className = "result-copy";
+
+    const rewardToast = document.createElement("div");
+    rewardToast.className = "reward-toast";
+    rewardToast.hidden = true;
 
     const actionButton = document.createElement("button");
     actionButton.className = "duel-button";
@@ -1505,14 +1779,29 @@ export class Game {
     const crosshair = document.createElement("div");
     crosshair.className = "crosshair";
 
-    overlay.append(topBar, bountyBoard, phaseLabel, detail, stats, result, actions, crosshair);
+    overlay.append(
+      topBar,
+      bountyBoard,
+      phaseLabel,
+      detail,
+      subtitle,
+      stats,
+      result,
+      actions,
+      rewardToast,
+      crosshair
+    );
 
     return {
       overlay,
       phaseLabel,
       detail,
+      subtitle,
+      subtitleSpeaker,
+      subtitleLine,
       stats,
       result,
+      rewardToast,
       enemyName,
       bountyBoard,
       actionButton,
@@ -1755,7 +2044,10 @@ export class Game {
       this.boardMode = mode;
       this.lastShopMessage = "";
       this.renderBountyBoard();
-      this.audio.playVoice(mode === "shop" ? "shopWelcome" : "welcomeBoard");
+      this.playVoiceWithSubtitle(mode === "shop" ? "shopWelcome" : "welcomeBoard", {
+        speaker: mode === "shop" ? "Shopkeeper" : "Bounty Board",
+        durationMs: 1500
+      });
       this.updateOverlay();
     });
 
@@ -1856,9 +2148,13 @@ export class Game {
     return card;
   }
 
-  private updateOverlay(): void {
+  private updateOverlay(now = performance.now()): void {
     this.settleDuelResultIfNeeded();
     const isBoard = this.state.phase === "intro";
+    const isWin = this.state.result?.outcome === "win";
+    const isLoss = this.state.result?.outcome === "loss";
+    const shotResult = this.state.result?.stats.shotResult;
+    const resultText = this.getResultText();
 
     this.ui.enemyName.textContent = this.getEnemyBadgeText();
     this.ui.bountyBoard.hidden = !isBoard;
@@ -1866,13 +2162,22 @@ export class Game {
     this.ui.detail.hidden = isBoard;
     this.ui.phaseLabel.textContent = this.getPhaseText();
     this.ui.phaseLabel.dataset.phase = this.state.result?.outcome ?? this.state.phase;
+    this.ui.detail.dataset.tone = isLoss ? "loss" : isWin ? "win" : "neutral";
     this.ui.detail.textContent = this.getDetailText();
-    this.ui.result.textContent = this.getResultText();
+    this.ui.result.textContent = resultText;
+    this.ui.result.classList.toggle("is-visible", resultText !== "");
+    this.ui.result.classList.toggle("is-win", isWin);
+    this.ui.result.classList.toggle("is-loss", isLoss);
+    this.ui.result.classList.toggle("is-disarm", shotResult === "disarm");
     this.ui.actionButton.hidden = this.state.phase !== "resolved";
     this.ui.backButton.hidden = this.state.phase !== "resolved";
     this.ui.crosshair.classList.toggle("is-visible", this.state.phase === "draw");
     this.ui.crosshair.classList.toggle("is-hot", this.state.phase === "draw");
     this.viewport.classList.toggle("is-aiming", this.state.phase === "draw");
+    this.viewport.classList.toggle("is-dueling", !isBoard);
+    this.viewport.classList.toggle("is-hit-pause", now < this.hitPauseUntil);
+    this.updateSubtitle(now);
+    this.updateRewardToast(now);
     this.renderStats();
   }
 
@@ -1892,6 +2197,8 @@ export class Game {
     switch (this.state.phase) {
       case "intro":
         return "BOUNTY BOARD";
+      case "standoff":
+        return "STANDOFF";
       case "ready":
         return "READY";
       case "steady":
@@ -1914,6 +2221,10 @@ export class Game {
 
     if (this.state.phase === "draw") {
       return "Aim and click.";
+    }
+
+    if (this.state.phase === "standoff") {
+      return "Hold until the signal.";
     }
 
     if (this.state.phase === "missed") {
@@ -2038,6 +2349,10 @@ export class Game {
 
       if (label === "Style Bonus" || label === "Upgrade Help") {
         row.classList.add("is-wide");
+      }
+
+      if (label === "Money Earned" && this.lastMoneyEarned > 0) {
+        row.classList.add("is-reward");
       }
 
       const labelEl = document.createElement("span");

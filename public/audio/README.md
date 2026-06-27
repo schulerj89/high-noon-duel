@@ -24,6 +24,16 @@ Generated ElevenLabs voice files should be placed in `public/audio/voice/`.
 - `voice/welcomeBoard.mp3`
 - `voice/shopWelcome.mp3`
 
+Optional enemy taunt voice files can be placed in `public/audio/voice/enemies/`.
+The game looks for these files when the matching dialogue subtitle appears:
+
+- `voice/enemies/{enemy-id}-intro-{line-number}.mp3`
+- `voice/enemies/{enemy-id}-fakeout-{line-number}.mp3`
+- `voice/enemies/{enemy-id}-lose-{line-number}.mp3`
+- `voice/enemies/{enemy-id}-win-{line-number}.mp3`
+
+Example: `voice/enemies/red-eye-ramos-intro-1.mp3`
+
 ## SFX
 
 - `sfx-gunshot-player.wav`

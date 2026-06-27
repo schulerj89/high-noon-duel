@@ -43,6 +43,7 @@ const DEFAULT_PREFERENCES: AudioPreferences = {
 
 export class AudioManager {
   private readonly voiceTracks = new Map<VoiceAudioId, AudioTrack<VoiceAudioId>>();
+  private readonly optionalVoiceTracks = new Map<string, AudioTrack<string>>();
   private readonly sfxTracks = new Map<SfxAudioId, AudioTrack<SfxAudioId>>();
   private readonly musicTracks = new Map<MusicAudioId, AudioTrack<MusicAudioId>>();
   private readonly activeMusic = new Map<MusicAudioId, HTMLAudioElement>();
@@ -80,6 +81,31 @@ export class AudioManager {
     const track = this.voiceTracks.get(id);
 
     if (!track || !this.canPlay(track)) {
+      return;
+    }
+
+    if (this.activeVoice) {
+      this.activeVoice.pause();
+      this.activeVoice.currentTime = 0;
+    }
+
+    const audio = track.audio;
+    audio.loop = false;
+    audio.currentTime = 0;
+    this.applyVolume(audio, "voice");
+    this.activeVoice = audio;
+    void this.safePlay(audio, track);
+  }
+
+  public playVoiceFile(id: string, url: string): void {
+    let track = this.optionalVoiceTracks.get(url);
+
+    if (!track) {
+      track = this.createTrack(id, "voice", url);
+      this.optionalVoiceTracks.set(url, track);
+    }
+
+    if (!this.canPlay(track)) {
       return;
     }
 

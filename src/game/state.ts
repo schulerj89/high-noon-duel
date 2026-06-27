@@ -1,10 +1,19 @@
 import type { ShotResult, ShotScore } from "./scoring";
 
-export type DuelPhase = "intro" | "ready" | "steady" | "waiting" | "draw" | "missed" | "resolved";
+export type DuelPhase =
+  | "intro"
+  | "standoff"
+  | "ready"
+  | "steady"
+  | "waiting"
+  | "draw"
+  | "missed"
+  | "resolved";
 export type DuelOutcome = "win" | "loss";
 export type DuelResultReason = "clean shot" | "enemy was faster" | "early draw" | "missed shot";
 
 export interface CountdownTiming {
+  standoffDurationMs: number;
   readyDurationMs: number;
   steadyDurationMs: number;
   drawPauseMs: number;
@@ -48,11 +57,15 @@ export function createIntroDuelState(now = 0): DuelState {
 
 export function startDuel(now: number, timing: CountdownTiming): DuelState {
   return {
-    phase: "ready",
+    phase: "standoff",
     roundStartedAt: now,
     phaseStartedAt: now,
     scheduledDrawAt:
-      now + timing.readyDurationMs + timing.steadyDurationMs + timing.drawPauseMs,
+      now +
+      timing.standoffDurationMs +
+      timing.readyDurationMs +
+      timing.steadyDurationMs +
+      timing.drawPauseMs,
     stats: {}
   };
 }
@@ -66,9 +79,10 @@ export function advanceDuelState(
     return state;
   }
 
-  const readyEndsAt = state.roundStartedAt + timing.readyDurationMs;
+  const standoffEndsAt = state.roundStartedAt + timing.standoffDurationMs;
+  const readyEndsAt = standoffEndsAt + timing.readyDurationMs;
   const steadyEndsAt = readyEndsAt + timing.steadyDurationMs;
-  let nextPhase: DuelPhase = "ready";
+  let nextPhase: DuelPhase = "standoff";
   let nextPhaseStartedAt = state.roundStartedAt;
 
   if (now >= state.scheduledDrawAt) {
@@ -80,6 +94,9 @@ export function advanceDuelState(
   } else if (now >= readyEndsAt) {
     nextPhase = "steady";
     nextPhaseStartedAt = readyEndsAt;
+  } else if (now >= standoffEndsAt) {
+    nextPhase = "ready";
+    nextPhaseStartedAt = standoffEndsAt;
   }
 
   const nextStats =
