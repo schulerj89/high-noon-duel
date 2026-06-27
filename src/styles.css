@@ -1,0 +1,275 @@
+:root {
+  color: #fff8e7;
+  background: #15100d;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+}
+
+.game-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 320px;
+  min-height: 420px;
+  overflow: hidden;
+  background: #15100d;
+}
+
+.game-viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.game-viewport.is-aiming {
+  cursor: none;
+}
+
+.duel-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto auto;
+  justify-items: center;
+  pointer-events: none;
+  color: #fff6dc;
+}
+
+.top-bar {
+  width: min(100%, 1180px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px clamp(16px, 4vw, 42px);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.game-title {
+  font-size: clamp(1rem, 2.2vw, 1.65rem);
+  font-weight: 900;
+  color: #fff2c2;
+  text-shadow: 0 2px 16px rgba(49, 27, 16, 0.7);
+}
+
+.enemy-badge {
+  min-width: 0;
+  color: #24160e;
+  background: #f6c86e;
+  border: 2px solid rgba(52, 30, 18, 0.55);
+  box-shadow: 0 10px 24px rgba(28, 18, 12, 0.22);
+  padding: 8px 12px;
+  font-size: clamp(0.75rem, 1.8vw, 0.95rem);
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.phase-label {
+  align-self: center;
+  min-width: min(560px, calc(100vw - 40px));
+  padding: 0 18px;
+  text-align: center;
+  font-size: clamp(4rem, 15vw, 10.5rem);
+  line-height: 0.86;
+  font-weight: 950;
+  color: #fff8d0;
+  text-shadow:
+    0 4px 0 rgba(77, 37, 19, 0.6),
+    0 16px 42px rgba(55, 30, 18, 0.66);
+}
+
+.phase-label[data-phase="waiting"] {
+  color: #253039;
+  text-shadow: 0 10px 32px rgba(255, 230, 170, 0.45);
+}
+
+.phase-label[data-phase="draw"],
+.phase-label[data-phase="win"] {
+  color: #ffe86b;
+}
+
+.phase-label[data-phase="loss"],
+.phase-label[data-phase="missed"] {
+  color: #ff785f;
+}
+
+.duel-overlay.is-hitbox-debug .phase-label {
+  opacity: 0.35;
+}
+
+.phase-detail {
+  align-self: start;
+  min-height: 32px;
+  margin-top: 10px;
+  padding: 0 18px;
+  font-size: clamp(1rem, 3.4vw, 1.35rem);
+  font-weight: 850;
+  text-transform: uppercase;
+  text-shadow: 0 8px 24px rgba(38, 22, 14, 0.7);
+}
+
+.stats-panel {
+  display: grid;
+  width: min(520px, calc(100vw - 32px));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  border: 1px solid rgba(255, 241, 199, 0.24);
+  background: rgba(26, 18, 14, 0.68);
+  box-shadow: 0 12px 30px rgba(13, 8, 5, 0.24);
+  padding: 10px 12px;
+}
+
+.stat-row span {
+  color: rgba(255, 246, 220, 0.72);
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stat-row strong {
+  color: #fff4c2;
+  font-size: 0.95rem;
+  text-align: right;
+}
+
+.stat-row.is-wide {
+  grid-column: 1 / -1;
+}
+
+.result-copy {
+  min-height: 24px;
+  margin-bottom: 12px;
+  padding: 0 18px;
+  color: rgba(255, 246, 220, 0.86);
+  font-size: 0.98rem;
+  font-weight: 750;
+  text-align: center;
+  text-shadow: 0 8px 18px rgba(19, 11, 6, 0.7);
+}
+
+.duel-button {
+  pointer-events: auto;
+  min-height: 44px;
+  margin-bottom: 26px;
+  border: 0;
+  border-radius: 4px;
+  background: #f4d05f;
+  color: #21130b;
+  box-shadow: 0 10px 0 #9a542c, 0 18px 34px rgba(20, 10, 4, 0.36);
+  padding: 0 22px;
+  font-weight: 950;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.duel-button:hover {
+  background: #ffe079;
+}
+
+.duel-button:active {
+  transform: translateY(3px);
+  box-shadow: 0 7px 0 #9a542c, 0 12px 22px rgba(20, 10, 4, 0.32);
+}
+
+.duel-button[hidden] {
+  display: none;
+}
+
+.crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30px;
+  height: 30px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.crosshair::before,
+.crosshair::after {
+  position: absolute;
+  content: "";
+  background: rgba(255, 248, 218, 0.9);
+  box-shadow: 0 0 12px rgba(35, 22, 14, 0.48);
+}
+
+.crosshair::before {
+  left: 14px;
+  top: 0;
+  width: 2px;
+  height: 30px;
+}
+
+.crosshair::after {
+  left: 0;
+  top: 14px;
+  width: 30px;
+  height: 2px;
+}
+
+.crosshair.is-visible {
+  opacity: 0.68;
+}
+
+.crosshair.is-hot {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1.08);
+}
+
+.crosshair.is-hot::before,
+.crosshair.is-hot::after {
+  background: #ffe86b;
+}
+
+@media (max-width: 640px) {
+  .top-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .enemy-badge {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .stats-panel {
+    grid-template-columns: 1fr;
+  }
+}
