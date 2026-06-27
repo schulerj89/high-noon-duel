@@ -54,21 +54,21 @@ export const AUDIO_MANIFEST: AudioManifest = {
     shopWelcome: "/audio/voice/shopWelcome.mp3"
   },
   sfx: {
-    gunshotPlayer: "/audio/sfx-gunshot-player.mp3",
-    gunshotEnemy: "/audio/sfx-gunshot-enemy.mp3",
-    revolverCock: "/audio/sfx-revolver-cock.mp3",
-    holsterLeather: "/audio/sfx-holster-leather.mp3",
-    bulletWhiz: "/audio/sfx-bullet-whiz.mp3",
-    dustImpact: "/audio/sfx-dust-impact.mp3",
-    bodyHit: "/audio/sfx-body-hit.mp3",
-    posterPaper: "/audio/sfx-poster-paper.mp3",
-    buttonClick: "/audio/sfx-button-click.mp3"
+    gunshotPlayer: "/audio/sfx-gunshot-player.wav",
+    gunshotEnemy: "/audio/sfx-gunshot-enemy.wav",
+    revolverCock: "/audio/sfx-revolver-cock.wav",
+    holsterLeather: "/audio/sfx-holster-leather.wav",
+    bulletWhiz: "/audio/sfx-bullet-whiz.wav",
+    dustImpact: "/audio/sfx-dust-impact.wav",
+    bodyHit: "/audio/sfx-body-hit.wav",
+    posterPaper: "/audio/sfx-poster-paper.wav",
+    buttonClick: "/audio/sfx-button-click.wav"
   },
   music: {
-    bountyBoardLoop: "/audio/music-bounty-board-loop.mp3",
-    townWindLoop: "/audio/music-town-wind-loop.mp3",
-    duelTensionLoop: "/audio/music-duel-tension-loop.mp3",
-    victorySting: "/audio/music-victory-sting.mp3",
-    defeatSting: "/audio/music-defeat-sting.mp3"
+    bountyBoardLoop: "/audio/music-bounty-board-loop.wav",
+    townWindLoop: "/audio/music-town-wind-loop.wav",
+    duelTensionLoop: "/audio/music-duel-tension-loop.wav",
+    victorySting: "/audio/music-victory-sting.wav",
+    defeatSting: "/audio/music-defeat-sting.wav"
   }
 };

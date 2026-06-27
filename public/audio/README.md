@@ -2,6 +2,8 @@
 
 Place generated or recorded audio files in this folder. The game looks for these files by exact filename and continues without crashing when files are missing.
 
+Run `npm run generate:audio` to regenerate the local placeholder SFX and music/ambience WAV files. Voice files are generated separately because they use the optional ElevenLabs developer workflow.
+
 ## Voice
 
 Generated ElevenLabs voice files should be placed in `public/audio/voice/`.
@@ -22,22 +24,22 @@ Generated ElevenLabs voice files should be placed in `public/audio/voice/`.
 
 ## SFX
 
-- `sfx-gunshot-player.mp3`
-- `sfx-gunshot-enemy.mp3`
-- `sfx-revolver-cock.mp3`
-- `sfx-holster-leather.mp3`
-- `sfx-bullet-whiz.mp3`
-- `sfx-dust-impact.mp3`
-- `sfx-body-hit.mp3`
-- `sfx-poster-paper.mp3`
-- `sfx-button-click.mp3`
+- `sfx-gunshot-player.wav`
+- `sfx-gunshot-enemy.wav`
+- `sfx-revolver-cock.wav`
+- `sfx-holster-leather.wav`
+- `sfx-bullet-whiz.wav`
+- `sfx-dust-impact.wav`
+- `sfx-body-hit.wav`
+- `sfx-poster-paper.wav`
+- `sfx-button-click.wav`
 
 ## Music and Ambience
 
-- `music-bounty-board-loop.mp3`
-- `music-town-wind-loop.mp3`
-- `music-duel-tension-loop.mp3`
-- `music-victory-sting.mp3`
-- `music-defeat-sting.mp3`
+- `music-bounty-board-loop.wav`
+- `music-town-wind-loop.wav`
+- `music-duel-tension-loop.wav`
+- `music-victory-sting.wav`
+- `music-defeat-sting.wav`
 
 Audio playback reacts to game state changes only. Duel timing is controlled by gameplay state, not by audio duration or playback latency.

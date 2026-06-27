@@ -13,7 +13,7 @@ High Noon Duel is a stylized browser-based western quick draw game built with Th
 - Enemy-driven reaction time, accuracy, fakeout chance, reward, and visual styling.
 - Local progression with money, duel record, owned upgrades, and localStorage persistence.
 - Simple upgrade shop with five data-driven upgrades.
-- Local audio manager with optional files from `public/audio` and graceful missing-file handling.
+- Local audio manager with checked-in placeholder voice, SFX, music, and graceful missing-file handling.
 - Mouse raycast hit zones for torso, head, and gun-hand disarm shots.
 - Miss handling with delayed enemy punish shot.
 - Result stats for reaction time, shot result, duel result, money earned, current money, and style bonuses.
@@ -26,7 +26,7 @@ High Noon Duel is a stylized browser-based western quick draw game built with Th
 - Add procedural weak spots, fakeouts, enemy tells, and focus mechanics.
 - Expand progression with enemy unlocks, bounty tiers, and tuned economy pacing.
 - Expand the town with procedural props and stronger feedback.
-- Add sound, screenshake polish, and animation timing once the loop feels good.
+- Replace placeholder audio with final mixed assets and tune screenshake/animation timing.
 
 ## Local Development
 
@@ -34,6 +34,7 @@ High Noon Duel is a stylized browser-based western quick draw game built with Th
 npm install
 npm run dev
 npm run build
+npm run generate:audio
 ```
 
 ## Voice Generation
@@ -56,17 +57,27 @@ ELEVENLABS_MODEL_ID=eleven_multilingual_v2
 With the local Windows secret broker:
 
 ```bash
-agent-secret with ELEVENLABS_API_KEY -- node scripts/generate-voiceovers.mjs
+agent-secret with ELEVENLABS_API_KEY -- npm run generate:voices
 ```
 
 Useful options:
 
 ```bash
-node scripts/generate-voiceovers.mjs --only draw
-node scripts/generate-voiceovers.mjs --force
+npm run generate:voices -- --only draw
+npm run generate:voices -- --force
 ```
 
 The script reads `scripts/voice-lines.json`, skips existing files by default, and writes generated MP3 files to `public/audio/voice/`.
+
+## Local Audio Assets
+
+SFX and music placeholders are generated without external services:
+
+```bash
+npm run generate:audio
+```
+
+This writes WAV files into `public/audio/`. The game uses local files only at runtime.
 
 ## Controls
 

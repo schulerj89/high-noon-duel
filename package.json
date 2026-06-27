@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "generate:audio": "node scripts/generate-local-audio.mjs",
+    "generate:voices": "node scripts/generate-voiceovers.mjs"
   },
   "dependencies": {
     "three": "^0.170.0"
