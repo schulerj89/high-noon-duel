@@ -42,13 +42,17 @@ import { getEnemyBehavior } from "../data/enemyBehaviors";
 import type { TownDefinition, TownId } from "../data/towns";
 import { UPGRADES, type UpgradeDefinition, type UpgradeId } from "../data/upgrades";
 import { getCameraPresentation } from "../scene/cameraPresentation";
-import {
-  applyEnvironmentVariant,
-  createDustStormParticles
-} from "../scene/applyEnvironmentVariant";
+import { applyEnvironmentVariant } from "../scene/applyEnvironmentVariant";
 import { createEnemy } from "../scene/createEnemy";
 import { updateEnemyMaterials } from "../scene/enemyMaterials";
 import { resetEnemyRigPose, type EnemyRig } from "../scene/enemyRig";
+import {
+  createAtmosphereParticles,
+  updateAtmosphereParticles,
+  type AtmosphereParticles
+} from "../scene/createParticles";
+import { createSkyBackdrop, updateSkyBackdrop, type SkyBackdrop } from "../scene/createSky";
+import { createTownScene, updateTownScene, type TownScene } from "../scene/createTown";
 import { GAME_CONFIG } from "./config";
 import {
   deriveDuelRules,
@@ -182,7 +186,6 @@ interface VolumeControlElements {
   value: HTMLSpanElement;
 }
 
-type Vec3Tuple = [number, number, number];
 type BoardMode = "bounties" | "shop" | "practice";
 type ScreenMode = "title" | "board" | "settings" | "credits" | "duel";
 type DuelLossReason = "enemy was faster" | "missed shot";
@@ -214,6 +217,26 @@ interface SubtitleState {
 }
 
 type EnemyDialogueKind = "intro" | "fakeout" | "lose" | "win";
+
+interface HighNoonDebugMetrics {
+  renderInfo: {
+    calls: number;
+    triangles: number;
+    geometries: number;
+    textures: number;
+  };
+  sceneId: string;
+  phase: DuelPhase;
+  screen: ScreenMode;
+  lowDetailMode: boolean;
+  cameraPosition: readonly [number, number, number];
+}
+
+declare global {
+  interface Window {
+    __HIGH_NOON_DEBUG__?: HighNoonDebugMetrics;
+  }
+}
 
 const VOICE_SUBTITLES = {
   ready: "Ready...",
@@ -308,6 +331,9 @@ export class Game {
   private hemisphereLight: THREE.HemisphereLight | null = null;
   private sunLight: THREE.DirectionalLight | null = null;
   private sunDisc: THREE.Mesh | null = null;
+  private skyBackdrop: SkyBackdrop | null = null;
+  private townScene: TownScene | null = null;
+  private atmosphereParticles: AtmosphereParticles | null = null;
   private groundMaterial: THREE.MeshStandardMaterial | null = null;
   private streetMaterial: THREE.MeshStandardMaterial | null = null;
   private dustStormGroup: THREE.Group | null = null;
@@ -430,6 +456,7 @@ export class Game {
       this.updateScene(visualNow, visualDelta);
       this.updateOverlay(now);
       this.renderer.render(this.scene, this.camera);
+      this.updateDebugMetrics();
       this.animationFrameId = window.requestAnimationFrame(this.tick);
       return;
     }
@@ -438,6 +465,7 @@ export class Game {
     this.updateScene(visualNow, visualDelta);
     this.updateOverlay(now);
     this.renderer.render(this.scene, this.camera);
+    this.updateDebugMetrics();
 
     this.animationFrameId = window.requestAnimationFrame(this.tick);
   };
@@ -644,6 +672,7 @@ export class Game {
     }
 
     saveProgression(this.progression);
+    this.rebuildTownScene();
     this.rebuildEnemy();
     this.renderBountyBoard();
     this.applyCurrentEnvironment();
@@ -668,6 +697,7 @@ export class Game {
     this.selectedModifier = getDuelModifier(this.selectedContract.modifierId);
     this.lastShopMessage = "";
     saveProgression(this.progression);
+    this.rebuildTownScene();
     this.rebuildEnemy();
     this.applyCurrentEnvironment();
     this.renderBountyBoard();
@@ -1017,6 +1047,30 @@ export class Game {
 
   private updateDevPanel(): void {
     this.devPanel?.update(this.createDevPanelSnapshot());
+  }
+
+  private updateDebugMetrics(): void {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    window.__HIGH_NOON_DEBUG__ = {
+      renderInfo: {
+        calls: this.renderer.info.render.calls,
+        triangles: this.renderer.info.render.triangles,
+        geometries: this.renderer.info.memory.geometries,
+        textures: this.renderer.info.memory.textures
+      },
+      sceneId: `${this.selectedTown.id}:${this.selectedModifier.id}`,
+      phase: this.state.phase,
+      screen: this.screenMode,
+      lowDetailMode: this.settings.lowDetailMode,
+      cameraPosition: [
+        this.camera.position.x,
+        this.camera.position.y,
+        this.camera.position.z
+      ]
+    };
   }
 
   private createDevPanelSnapshot(): DevPanelSnapshot {
@@ -1875,6 +1929,7 @@ export class Game {
     this.lastCampaignReward = 0;
     this.practiceSession = null;
     this.clearPracticeTargets();
+    this.rebuildTownScene();
     this.rebuildEnemy();
   }
 
@@ -1916,10 +1971,18 @@ export class Game {
   }
 
   private updateSettings(patch: Partial<GameSettings>): void {
+    const previousLowDetailMode = this.settings.lowDetailMode;
     this.settings = updateGameSettings(this.settings, patch);
     saveGameSettings(this.settings);
     this.applyAudioSettings();
     this.applySettingsToUi();
+
+    if (previousLowDetailMode !== this.settings.lowDetailMode) {
+      this.rebuildTownScene();
+      this.rebuildAtmosphereEffects();
+      this.applyCurrentEnvironment();
+    }
+
     this.playerStats = this.createPlayerStats();
     this.updateHitZoneScale();
     this.updateHitBoxVisibility();
@@ -2354,19 +2417,42 @@ export class Game {
     this.updateFlash(this.muzzleFlash, this.lastPlayerShotAt, now);
     this.updateFlash(this.enemyMuzzleFlash, this.lastEnemyShotAt, now);
     this.updateMissDust(now);
-    this.updateEnvironmentEffects(now);
+    this.updateEnvironmentEffects(now, delta);
     this.updateHitZoneScale();
     this.updateHitBoxVisibility();
   }
 
-  private updateEnvironmentEffects(now: number): void {
-    if (!this.dustStormGroup || !this.dustStormGroup.visible) {
+  private updateEnvironmentEffects(now: number, delta: number): void {
+    const rules = this.getDuelRules();
+
+    if (this.skyBackdrop) {
+      updateSkyBackdrop(this.skyBackdrop, {
+        now,
+        variantId: rules.environmentVariant,
+        reducedMotion: this.settings.reducedMotion
+      });
+    }
+
+    if (this.townScene) {
+      updateTownScene(this.townScene, {
+        now,
+        reducedMotion: this.settings.reducedMotion,
+        lowDetail: this.settings.lowDetailMode
+      });
+    }
+
+    if (!this.atmosphereParticles) {
       return;
     }
 
-    this.dustStormGroup.position.x = Math.sin(now * 0.0007) * 0.16;
-    this.dustStormGroup.position.z = Math.sin(now * 0.0005) * 0.08;
-    this.dustStormGroup.rotation.y = Math.sin(now * 0.00035) * 0.025;
+    updateAtmosphereParticles(this.atmosphereParticles, {
+      now,
+      delta,
+      phase: this.state.phase,
+      variantId: rules.environmentVariant,
+      lowDetail: this.settings.lowDetailMode,
+      reducedMotion: this.settings.reducedMotion
+    });
   }
 
   private updateFakeoutDialogue(now: number): void {
@@ -2649,8 +2735,8 @@ export class Game {
 
   private buildScene(): void {
     this.addLighting();
-    this.addGround();
-    this.addTown();
+    this.addSkyBackdrop();
+    this.addTownScene();
     this.addEnemy();
     this.addGun();
     this.addMissDust();
@@ -2675,58 +2761,33 @@ export class Game {
     sun.shadow.camera.bottom = -9;
     this.scene.add(sun);
     this.sunLight = sun;
-
-    const sunDisc = new THREE.Mesh(
-      new THREE.CircleGeometry(0.75, 32),
-      new THREE.MeshBasicMaterial({ color: "#ffe2a0" })
-    );
-    sunDisc.position.set(-5.5, 5.6, -9);
-    sunDisc.lookAt(this.camera.position);
-    this.scene.add(sunDisc);
-    this.sunDisc = sunDisc;
   }
 
-  private addGround(): void {
-    const groundMaterial = new THREE.MeshStandardMaterial({ color: "#c98542", roughness: 0.95 });
-    const streetMaterial = new THREE.MeshStandardMaterial({ color: "#8b5a37", roughness: 1 });
-    this.groundMaterial = groundMaterial;
-    this.streetMaterial = streetMaterial;
+  private addSkyBackdrop(): void {
+    const skyBackdrop = createSkyBackdrop();
+    this.skyBackdrop = skyBackdrop;
+    this.sunDisc = skyBackdrop.celestialDisc;
+    this.scene.add(skyBackdrop.root);
+  }
 
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(24, 26),
-      groundMaterial
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.z = -4;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
-
-    const street = new THREE.Mesh(
-      new THREE.PlaneGeometry(4.8, 22),
-      streetMaterial
-    );
-    street.rotation.x = -Math.PI / 2;
-    street.position.set(0, 0.012, -4.5);
-    street.receiveShadow = true;
-    this.scene.add(street);
-
-    const dustPuffs = new THREE.Group();
-    const dustMaterial = new THREE.MeshStandardMaterial({ color: "#e7b96b", roughness: 1 });
-
-    for (let i = 0; i < 26; i += 1) {
-      const dust = new THREE.Mesh(new THREE.SphereGeometry(0.035 + (i % 3) * 0.01, 8, 6), dustMaterial);
-      dust.position.set(((i * 1.37) % 8) - 4, 0.04, -1.5 - i * 0.34);
-      dust.scale.y = 0.45;
-      dustPuffs.add(dust);
-    }
-
-    this.scene.add(dustPuffs);
+  private addTownScene(): void {
+    const townScene = createTownScene({
+      townId: this.selectedTown.id,
+      lowDetail: this.settings.lowDetailMode
+    });
+    this.townScene = townScene;
+    this.groundMaterial = townScene.groundMaterial;
+    this.streetMaterial = townScene.streetMaterial;
+    this.scene.add(townScene.root);
   }
 
   private addEnvironmentEffects(): void {
-    const dustStormGroup = createDustStormParticles();
-    this.scene.add(dustStormGroup);
-    this.dustStormGroup = dustStormGroup;
+    const atmosphereParticles = createAtmosphereParticles({
+      lowDetail: this.settings.lowDetailMode
+    });
+    this.atmosphereParticles = atmosphereParticles;
+    this.dustStormGroup = atmosphereParticles.dustStormGroup;
+    this.scene.add(atmosphereParticles.root);
   }
 
   private applyCurrentEnvironment(): void {
@@ -2747,78 +2808,27 @@ export class Game {
     this.updateEnemyVisual();
   }
 
-  private addTown(): void {
-    const boardwalkMaterial = new THREE.MeshStandardMaterial({ color: "#744b2b", roughness: 0.9 });
-
-    for (const side of [-1, 1]) {
-      const boardwalk = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.16, 16), boardwalkMaterial);
-      boardwalk.position.set(side * 3.05, 0.08, -4.8);
-      boardwalk.receiveShadow = true;
-      boardwalk.castShadow = true;
-      this.scene.add(boardwalk);
+  private rebuildTownScene(): void {
+    if (this.townScene) {
+      this.scene.remove(this.townScene.root);
+      this.disposeObject(this.townScene.root);
+      this.townScene = null;
     }
 
-    const buildings = [
-      { side: -1, z: -7.3, width: 1.3, height: 2.7, depth: 2.1, color: "#9f3f35" },
-      { side: -1, z: -4.9, width: 1.25, height: 2.15, depth: 1.7, color: "#dfb35f" },
-      { side: -1, z: -2.5, width: 1.4, height: 2.4, depth: 2.2, color: "#6c7e68" },
-      { side: 1, z: -7.8, width: 1.35, height: 2.35, depth: 2.0, color: "#3e6d88" },
-      { side: 1, z: -5.2, width: 1.3, height: 2.65, depth: 2.4, color: "#b6583f" },
-      { side: 1, z: -2.8, width: 1.2, height: 2.05, depth: 1.8, color: "#c7954f" }
-    ];
-
-    for (const building of buildings) {
-      const x = building.side * 3.85;
-      const body = this.createBox(
-        [building.width, building.height, building.depth],
-        building.color,
-        [x, building.height / 2, building.z]
-      );
-      this.scene.add(body);
-
-      const roof = this.createBox(
-        [building.width + 0.24, 0.18, building.depth + 0.2],
-        "#4c2e26",
-        [x, building.height + 0.08, building.z]
-      );
-      this.scene.add(roof);
-
-      const sign = this.createBox(
-        [0.12, 0.42, Math.min(1.25, building.depth * 0.7)],
-        "#f2ca72",
-        [building.side * 3.12, building.height * 0.67, building.z]
-      );
-      this.scene.add(sign);
-
-      const awning = this.createBox(
-        [0.2, 0.12, Math.min(1.55, building.depth * 0.8)],
-        "#334b5c",
-        [building.side * 2.95, 1.2, building.z]
-      );
-      this.scene.add(awning);
-    }
-
-    this.addBarrels(-2.55, -3.7);
-    this.addBarrels(2.55, -6.4);
+    this.groundMaterial = null;
+    this.streetMaterial = null;
+    this.addTownScene();
   }
 
-  private addBarrels(x: number, z: number): void {
-    const barrelMaterial = new THREE.MeshStandardMaterial({ color: "#7a3f24", roughness: 0.85 });
-    const bandMaterial = new THREE.MeshStandardMaterial({ color: "#2a2522", roughness: 0.6 });
-
-    for (let i = 0; i < 3; i += 1) {
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 0.62, 12), barrelMaterial);
-      barrel.position.set(x + i * 0.24, 0.31, z + (i % 2) * 0.28);
-      barrel.castShadow = true;
-      barrel.receiveShadow = true;
-      this.scene.add(barrel);
-
-      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.245, 0.285, 0.06, 12), bandMaterial);
-      band.position.copy(barrel.position);
-      band.position.y += 0.14;
-      band.castShadow = true;
-      this.scene.add(band);
+  private rebuildAtmosphereEffects(): void {
+    if (this.atmosphereParticles) {
+      this.scene.remove(this.atmosphereParticles.root);
+      this.disposeObject(this.atmosphereParticles.root);
+      this.atmosphereParticles = null;
     }
+
+    this.dustStormGroup = null;
+    this.addEnvironmentEffects();
   }
 
   private addEnemy(): void {
@@ -2914,7 +2924,11 @@ export class Game {
 
   private disposeObject(object: THREE.Object3D): void {
     object.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
+      if (
+        child instanceof THREE.Mesh ||
+        child instanceof THREE.Points ||
+        child instanceof THREE.Line
+      ) {
         child.geometry.dispose();
         this.disposeMaterial(child.material);
       }
@@ -2929,6 +2943,20 @@ export class Game {
       return;
     }
 
+    const mapMaterial = material as THREE.Material & {
+      map?: THREE.Texture | null;
+      alphaMap?: THREE.Texture | null;
+      emissiveMap?: THREE.Texture | null;
+      normalMap?: THREE.Texture | null;
+      roughnessMap?: THREE.Texture | null;
+      metalnessMap?: THREE.Texture | null;
+    };
+    mapMaterial.map?.dispose();
+    mapMaterial.alphaMap?.dispose();
+    mapMaterial.emissiveMap?.dispose();
+    mapMaterial.normalMap?.dispose();
+    mapMaterial.roughnessMap?.dispose();
+    mapMaterial.metalnessMap?.dispose();
     material.dispose();
   }
 
@@ -3103,17 +3131,6 @@ export class Game {
     this.camera.add(group);
     this.gunGroup = group;
     this.muzzleFlash = flash;
-  }
-
-  private createBox(size: Vec3Tuple, color: string, position: Vec3Tuple): THREE.Mesh {
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(size[0], size[1], size[2]),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.82 })
-    );
-    mesh.position.set(position[0], position[1], position[2]);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    return mesh;
   }
 
   private createOverlay(): UiElements {

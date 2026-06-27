@@ -69,6 +69,9 @@ export function createSettingsMenu(options: SettingsMenuOptions): HTMLDivElement
       createToggleSetting("Reduced Motion", options.settings.reducedMotion, (checked) =>
         options.onSettingsChange({ reducedMotion: checked })
       ),
+      createToggleSetting("Low Detail", options.settings.lowDetailMode, (checked) =>
+        options.onSettingsChange({ lowDetailMode: checked })
+      ),
       createToggleSetting("Show Reaction Time", options.settings.showReactionTime, (checked) =>
         options.onSettingsChange({ showReactionTime: checked })
       ),

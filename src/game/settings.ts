@@ -10,6 +10,7 @@ export interface GameSettings {
   reticleOpacity: number;
   subtitlesEnabled: boolean;
   reducedMotion: boolean;
+  lowDetailMode: boolean;
   showReactionTime: boolean;
   difficultyAssist: boolean;
 }
@@ -28,6 +29,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   reticleOpacity: 1,
   subtitlesEnabled: true,
   reducedMotion: false,
+  lowDetailMode: false,
   showReactionTime: true,
   difficultyAssist: false
 };
@@ -84,6 +86,7 @@ function parseGameSettings(value: unknown): GameSettings {
     reticleOpacity: readNumber(value.reticleOpacity, DEFAULT_GAME_SETTINGS.reticleOpacity),
     subtitlesEnabled: readBoolean(value.subtitlesEnabled, DEFAULT_GAME_SETTINGS.subtitlesEnabled),
     reducedMotion: readBoolean(value.reducedMotion, DEFAULT_GAME_SETTINGS.reducedMotion),
+    lowDetailMode: readBoolean(value.lowDetailMode, DEFAULT_GAME_SETTINGS.lowDetailMode),
     showReactionTime: readBoolean(value.showReactionTime, DEFAULT_GAME_SETTINGS.showReactionTime),
     difficultyAssist: readBoolean(value.difficultyAssist, DEFAULT_GAME_SETTINGS.difficultyAssist)
   });
@@ -102,6 +105,7 @@ function normalizeGameSettings(settings: GameSettings): GameSettings {
     reticleOpacity: clampRange(settings.reticleOpacity, 0.25, 1),
     subtitlesEnabled: settings.subtitlesEnabled,
     reducedMotion: settings.reducedMotion,
+    lowDetailMode: settings.lowDetailMode,
     showReactionTime: settings.showReactionTime,
     difficultyAssist: settings.difficultyAssist
   };

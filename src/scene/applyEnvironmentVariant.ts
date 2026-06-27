@@ -22,6 +22,8 @@ interface EnvironmentVariantConfig {
   sunColor: string;
   sunIntensity: number;
   sunDiscColor: string;
+  sunDiscPosition: readonly [number, number, number];
+  sunDiscScale: number;
   groundColor: string;
   streetColor: string;
   dustVisible: boolean;
@@ -39,6 +41,8 @@ const VARIANT_CONFIG: Record<EnvironmentVariantId, EnvironmentVariantConfig> = {
     sunColor: "#fff4d0",
     sunIntensity: 3.2,
     sunDiscColor: "#ffe2a0",
+    sunDiscPosition: [-5.5, 5.6, -9],
+    sunDiscScale: 1,
     groundColor: "#c98542",
     streetColor: "#8b5a37",
     dustVisible: false
@@ -54,6 +58,8 @@ const VARIANT_CONFIG: Record<EnvironmentVariantId, EnvironmentVariantConfig> = {
     sunColor: "#ffb36d",
     sunIntensity: 3.8,
     sunDiscColor: "#ffbf5c",
+    sunDiscPosition: [-5.9, 2.9, -8.7],
+    sunDiscScale: 1.3,
     groundColor: "#b66e3e",
     streetColor: "#734832",
     dustVisible: false
@@ -69,6 +75,8 @@ const VARIANT_CONFIG: Record<EnvironmentVariantId, EnvironmentVariantConfig> = {
     sunColor: "#ffd08a",
     sunIntensity: 2.25,
     sunDiscColor: "#f2b75f",
+    sunDiscPosition: [-4.9, 4.1, -9.3],
+    sunDiscScale: 0.82,
     groundColor: "#ba7b42",
     streetColor: "#7a5135",
     dustVisible: true
@@ -84,42 +92,13 @@ const VARIANT_CONFIG: Record<EnvironmentVariantId, EnvironmentVariantConfig> = {
     sunColor: "#fff0c8",
     sunIntensity: 3,
     sunDiscColor: "#ffe2a0",
+    sunDiscPosition: [-5.2, 5.2, -11],
+    sunDiscScale: 0.9,
     groundColor: "#c98542",
     streetColor: "#805335",
     dustVisible: false
   }
 };
-
-export function createDustStormParticles(): THREE.Group {
-  const group = new THREE.Group();
-  group.name = "dust-storm-particles";
-  group.visible = false;
-
-  const material = new THREE.MeshBasicMaterial({
-    color: "#e5b369",
-    depthWrite: false,
-    opacity: 0.26,
-    transparent: true
-  });
-
-  for (let i = 0; i < 54; i += 1) {
-    const particle = new THREE.Mesh(
-      new THREE.SphereGeometry(0.045 + (i % 5) * 0.012, 8, 6),
-      material
-    );
-    const row = i % 9;
-    const column = Math.floor(i / 9);
-    particle.position.set(
-      -2.6 + row * 0.65 + ((column % 2) * 0.18),
-      0.45 + (i % 6) * 0.22,
-      -2.6 - column * 0.86
-    );
-    particle.scale.set(1.8, 0.55, 0.8);
-    group.add(particle);
-  }
-
-  return group;
-}
 
 export function applyEnvironmentVariant(
   variantId: EnvironmentVariantId,
@@ -147,6 +126,13 @@ export function applyEnvironmentVariant(
     if (material instanceof THREE.MeshBasicMaterial) {
       material.color.set(config.sunDiscColor);
     }
+
+    targets.sunDisc.position.set(
+      config.sunDiscPosition[0],
+      config.sunDiscPosition[1],
+      config.sunDiscPosition[2]
+    );
+    targets.sunDisc.scale.setScalar(config.sunDiscScale);
   }
 
   targets.groundMaterial?.color.set(config.groundColor);
