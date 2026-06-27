@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { AudioManager } from "../audio/AudioManager";
 import { DEFAULT_ENEMY, ENEMIES, type EnemyDefinition } from "../data/enemies";
 import { UPGRADES, type UpgradeDefinition, type UpgradeId } from "../data/upgrades";
 import { GAME_CONFIG } from "./config";
@@ -28,6 +29,7 @@ import {
   advanceDuelState,
   createIntroDuelState,
   type CountdownTiming,
+  type DuelPhase,
   type DuelState,
   formatDuration,
   recordPlayerMiss,
@@ -47,6 +49,7 @@ interface UiElements {
   bountyBoard: HTMLDivElement;
   actionButton: HTMLButtonElement;
   backButton: HTMLButtonElement;
+  muteButton: HTMLButtonElement;
   crosshair: HTMLDivElement;
 }
 
@@ -84,6 +87,7 @@ export class Game {
   private readonly pointer = new THREE.Vector2(0, 0);
   private readonly hitZoneMeshes: THREE.Mesh[] = [];
   private readonly hitZoneByMesh = new Map<THREE.Object3D, HitZoneDefinition>();
+  private readonly audio = new AudioManager();
   private readonly ui: UiElements;
 
   private progression: PlayerProgression = loadProgression();
@@ -151,6 +155,8 @@ export class Game {
     this.bindEvents();
     this.handleResize();
     this.updateOverlay();
+    this.updateMuteButton();
+    this.playBountyBoardAudio();
   }
 
   public start(): void {
@@ -166,10 +172,13 @@ export class Game {
 
     this.renderer.domElement.removeEventListener("pointermove", this.handlePointerMove);
     this.renderer.domElement.removeEventListener("pointerdown", this.handlePointerDown);
+    window.removeEventListener("pointerdown", this.handleFirstUserInteraction, true);
     window.removeEventListener("keydown", this.handleKeyDown);
-    this.ui.actionButton.removeEventListener("click", this.startRound);
-    this.ui.backButton.removeEventListener("click", this.showBountyBoard);
+    this.ui.actionButton.removeEventListener("click", this.handleRestartButtonClick);
+    this.ui.backButton.removeEventListener("click", this.handleBackButtonClick);
+    this.ui.muteButton.removeEventListener("click", this.handleMuteButtonClick);
     this.resizeObserver?.disconnect();
+    this.audio.stopAll();
 
     this.scene.traverse((object) => {
       if (object instanceof THREE.Mesh) {
@@ -202,6 +211,7 @@ export class Game {
       );
     }
 
+    this.handleDuelPhaseAudio(previousPhase, this.state.phase);
     this.handleEnemyShot(now);
     this.updateScene(now, delta);
     this.updateOverlay();
@@ -251,6 +261,7 @@ export class Game {
 
     this.updateHitZoneScale();
     this.updateHitBoxVisibility();
+    this.playDuelStartAudio();
     this.updateOverlay();
   };
 
@@ -276,6 +287,7 @@ export class Game {
 
     this.updateEnemyVisual();
     this.renderBountyBoard();
+    this.playBountyBoardAudio();
     this.updateOverlay();
   };
 
@@ -328,13 +340,42 @@ export class Game {
   private bindEvents(): void {
     this.renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
     this.renderer.domElement.addEventListener("pointerdown", this.handlePointerDown);
+    window.addEventListener("pointerdown", this.handleFirstUserInteraction, true);
     window.addEventListener("keydown", this.handleKeyDown);
-    this.ui.actionButton.addEventListener("click", this.startRound);
-    this.ui.backButton.addEventListener("click", this.showBountyBoard);
+    this.ui.actionButton.addEventListener("click", this.handleRestartButtonClick);
+    this.ui.backButton.addEventListener("click", this.handleBackButtonClick);
+    this.ui.muteButton.addEventListener("click", this.handleMuteButtonClick);
 
     this.resizeObserver = new ResizeObserver(this.handleResize);
     this.resizeObserver.observe(this.viewport);
   }
+
+  private readonly handleFirstUserInteraction = (): void => {
+    this.audio.unlock();
+  };
+
+  private readonly handleRestartButtonClick = (): void => {
+    this.audio.unlock();
+    this.audio.playSfx("buttonClick");
+    this.startRound();
+  };
+
+  private readonly handleBackButtonClick = (): void => {
+    this.audio.unlock();
+    this.audio.playSfx("buttonClick");
+    this.showBountyBoard();
+  };
+
+  private readonly handleMuteButtonClick = (): void => {
+    this.audio.unlock();
+    const muted = this.audio.toggleMute();
+
+    if (!muted) {
+      this.audio.playSfx("buttonClick");
+    }
+
+    this.updateMuteButton();
+  };
 
   private readonly handleResize = (): void => {
     const width = Math.max(1, this.viewport.clientWidth);
@@ -359,6 +400,8 @@ export class Game {
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    this.audio.unlock();
+
     if (event.code === "Space") {
       event.preventDefault();
       this.ui.crosshair.style.left = "50%";
@@ -378,6 +421,11 @@ export class Game {
     if (event.code === "KeyH") {
       this.hitBoxesVisible = !this.hitBoxesVisible;
       this.updateHitBoxVisibility();
+    }
+
+    if (event.code === "KeyM") {
+      this.audio.toggleMute();
+      this.updateMuteButton();
     }
   };
 
@@ -401,11 +449,14 @@ export class Game {
     }
 
     const now = performance.now();
+    const previousPhase = this.state.phase;
     this.state = advanceDuelState(this.state, now, this.timing);
+    this.handleDuelPhaseAudio(previousPhase, this.state.phase);
 
     if (this.state.phase !== "draw") {
       this.lastPlayerShotAt = now;
       this.showPlayerMuzzleFlash();
+      this.audio.playSfx("gunshotPlayer");
       this.state = resolveEarlyDraw(this.state, now);
       this.updateOverlay();
       return;
@@ -413,6 +464,7 @@ export class Game {
 
     this.lastPlayerShotAt = now;
     this.showPlayerMuzzleFlash();
+    this.audio.playSfx("gunshotPlayer");
 
     const hitZone = this.getHitZoneUnderReticle();
     const baseShotScore = scoreHitZone(hitZone);
@@ -421,6 +473,7 @@ export class Game {
     if (baseShotScore.shotResult === "miss") {
       this.lastMissAt = now;
       this.showMissDust();
+      this.audio.playSfx("dustImpact");
       this.state = recordPlayerMiss(this.state, now, baseShotScore);
       this.missLossAt = getMissPunishFireAt(
         now,
@@ -448,6 +501,7 @@ export class Game {
       : baseShotScore;
 
     this.lastLuckyCharmTriggered = timing.luckyCharmTriggered;
+    this.audio.playSfx("bodyHit");
     this.state = resolvePlayerHit(this.state, now, shotScore, this.enemyReactionMs);
 
     this.updateOverlay();
@@ -524,6 +578,11 @@ export class Game {
 
     this.enemyHasFired = true;
     this.lastEnemyShotAt = performance.now();
+    this.audio.playSfx("gunshotEnemy");
+
+    if (reason === "enemy was faster") {
+      this.audio.playSfx("bulletWhiz");
+    }
 
     if (this.enemyMuzzleFlash) {
       this.enemyMuzzleFlash.visible = true;
@@ -547,6 +606,7 @@ export class Game {
     this.lastMoneyEarned = reward;
     this.duelSettled = true;
     saveProgression(this.progression);
+    this.playDuelResultAudio();
     this.renderBountyBoard();
   }
 
@@ -577,6 +637,7 @@ export class Game {
       return;
     }
 
+    this.audio.playSfx("buttonClick");
     clearSavedProgression();
     this.progression = createDefaultProgression();
     saveProgression(this.progression);
@@ -590,6 +651,107 @@ export class Game {
     this.updateHitBoxVisibility();
     this.renderBountyBoard();
     this.updateOverlay();
+  }
+
+  private handleDuelPhaseAudio(previousPhase: DuelPhase, nextPhase: DuelPhase): void {
+    if (previousPhase === nextPhase) {
+      return;
+    }
+
+    if (nextPhase === "steady") {
+      this.audio.playVoice("steady");
+      return;
+    }
+
+    if (nextPhase === "draw") {
+      this.audio.playVoice("draw");
+      this.audio.playSfx("revolverCock");
+    }
+  }
+
+  private playBountyBoardAudio(): void {
+    this.audio.stopMusic("duelTensionLoop", 450);
+    this.audio.stopMusic("victorySting", 100);
+    this.audio.stopMusic("defeatSting", 100);
+    this.audio.playMusic("townWindLoop", {
+      loop: true,
+      fadeInMs: 500,
+      volume: 0.55
+    });
+    this.audio.playMusic("bountyBoardLoop", {
+      loop: true,
+      fadeInMs: 500,
+      volume: 0.65
+    });
+  }
+
+  private playDuelStartAudio(): void {
+    this.audio.stopMusic("bountyBoardLoop", 350);
+    this.audio.stopMusic("victorySting", 100);
+    this.audio.stopMusic("defeatSting", 100);
+    this.audio.playMusic("townWindLoop", {
+      loop: true,
+      fadeInMs: 300,
+      volume: 0.5
+    });
+    this.audio.playMusic("duelTensionLoop", {
+      loop: true,
+      fadeInMs: 450,
+      volume: 0.72
+    });
+    this.audio.playVoice("ready");
+    this.audio.playSfx("holsterLeather");
+  }
+
+  private playDuelResultAudio(): void {
+    const result = this.state.result;
+
+    if (!result) {
+      return;
+    }
+
+    this.audio.stopMusic("duelTensionLoop", 350);
+
+    if (result.outcome === "win") {
+      this.audio.playMusic("victorySting", {
+        loop: false,
+        fadeInMs: 30,
+        restart: true,
+        volume: 0.95
+      });
+      this.audio.playVoice("bountyClaimed");
+      return;
+    }
+
+    this.audio.playMusic("defeatSting", {
+      loop: false,
+      fadeInMs: 30,
+      restart: true,
+      volume: 0.95
+    });
+
+    if (result.reason === "early draw") {
+      this.audio.playVoice("tooSoon");
+      return;
+    }
+
+    if (result.reason === "missed shot") {
+      this.audio.playVoice("miss");
+      return;
+    }
+
+    if (result.reason === "enemy was faster") {
+      this.audio.playVoice("enemyFaster");
+      return;
+    }
+
+    this.audio.playVoice("tryAgainPartner");
+  }
+
+  private updateMuteButton(): void {
+    const muted = this.audio.isMuted();
+    this.ui.muteButton.textContent = muted ? "Audio Off" : "Audio On";
+    this.ui.muteButton.setAttribute("aria-pressed", String(muted));
   }
 
   private showPlayerMuzzleFlash(): void {
@@ -1187,7 +1349,17 @@ export class Game {
     enemyName.textContent = this.getEnemyBadgeText();
     enemyBadge.append(enemyName);
 
-    topBar.append(title, enemyBadge);
+    const muteButton = document.createElement("button");
+    muteButton.className = "mute-button";
+    muteButton.type = "button";
+    muteButton.textContent = "Audio On";
+    muteButton.setAttribute("aria-pressed", "false");
+
+    const topStatus = document.createElement("div");
+    topStatus.className = "top-status";
+    topStatus.append(enemyBadge, muteButton);
+
+    topBar.append(title, topStatus);
 
     const bountyBoard = document.createElement("div");
     bountyBoard.className = "bounty-board";
@@ -1233,6 +1405,7 @@ export class Game {
       bountyBoard,
       actionButton,
       backButton,
+      muteButton,
       crosshair
     };
   }
@@ -1281,7 +1454,10 @@ export class Game {
       card.className = "bounty-card";
       card.type = "button";
       card.dataset.enemyId = enemy.id;
-      card.addEventListener("click", () => this.selectEnemy(enemy));
+      card.addEventListener("click", () => {
+        this.audio.playSfx("posterPaper");
+        this.selectEnemy(enemy);
+      });
 
       const name = document.createElement("strong");
       name.textContent = enemy.name;
@@ -1314,6 +1490,7 @@ export class Game {
     button.textContent = label;
     button.disabled = this.boardMode === mode;
     button.addEventListener("click", () => {
+      this.audio.playSfx("buttonClick");
       this.boardMode = mode;
       this.lastShopMessage = "";
       this.renderBountyBoard();
@@ -1384,7 +1561,10 @@ export class Game {
     card.type = "button";
     card.dataset.upgradeId = upgrade.id;
     card.disabled = owned || !canAfford;
-    card.addEventListener("click", () => this.buyUpgrade(upgrade.id));
+    card.addEventListener("click", () => {
+      this.audio.playSfx("buttonClick");
+      this.buyUpgrade(upgrade.id);
+    });
 
     if (owned) {
       card.classList.add("is-owned");

@@ -13,6 +13,7 @@ High Noon Duel is a stylized browser-based western quick draw game built with Th
 - Enemy-driven reaction time, accuracy, fakeout chance, reward, and visual styling.
 - Local progression with money, duel record, owned upgrades, and localStorage persistence.
 - Simple upgrade shop with five data-driven upgrades.
+- Local audio manager with optional files from `public/audio` and graceful missing-file handling.
 - Mouse raycast hit zones for torso, head, and gun-hand disarm shots.
 - Miss handling with delayed enemy punish shot.
 - Result stats for reaction time, shot result, duel result, money earned, current money, and style bonuses.
@@ -42,6 +43,7 @@ npm run build
 - Shop button: open the upgrade shop from the bounty board.
 - Bounties button: return to bounty selection from the shop.
 - Reset Progress button: clears saved money, record, and upgrades after confirmation.
+- Audio On/Off button: mute or unmute local audio.
 - Space: start the currently selected bounty or restart after a completed duel.
 - Left click before DRAW: early draw loss.
 - Left click after DRAW: fire at the reticle.
@@ -49,3 +51,4 @@ npm run build
 - Back to Bounty Board button: choose another enemy.
 - R: restart the duel.
 - H: show or hide hitbox debug overlays.
+- M: mute or unmute audio.
