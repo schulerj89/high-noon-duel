@@ -4,15 +4,21 @@ Place generated or recorded audio files in this folder. The game looks for these
 
 ## Voice
 
-- `voice-ready.mp3`
-- `voice-steady.mp3`
-- `voice-draw.mp3`
-- `voice-too-soon.mp3`
-- `voice-clean-shot.mp3`
-- `voice-miss.mp3`
-- `voice-enemy-faster.mp3`
-- `voice-bounty-claimed.mp3`
-- `voice-try-again-partner.mp3`
+Generated ElevenLabs voice files should be placed in `public/audio/voice/`.
+
+- `voice/ready.mp3`
+- `voice/steady.mp3`
+- `voice/draw.mp3`
+- `voice/tooSoon.mp3`
+- `voice/cleanShot.mp3`
+- `voice/miss.mp3`
+- `voice/enemyFaster.mp3`
+- `voice/bountyClaimed.mp3`
+- `voice/tryAgainPartner.mp3`
+- `voice/disarm.mp3`
+- `voice/headshot.mp3`
+- `voice/welcomeBoard.mp3`
+- `voice/shopWelcome.mp3`
 
 ## SFX
 

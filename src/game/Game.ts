@@ -683,6 +683,7 @@ export class Game {
       fadeInMs: 500,
       volume: 0.65
     });
+    this.audio.playVoice("welcomeBoard");
   }
 
   private playDuelStartAudio(): void {
@@ -719,7 +720,7 @@ export class Game {
         restart: true,
         volume: 0.95
       });
-      this.audio.playVoice("bountyClaimed");
+      this.audio.playVoice(this.getWinVoiceLineId());
       return;
     }
 
@@ -752,6 +753,24 @@ export class Game {
     const muted = this.audio.isMuted();
     this.ui.muteButton.textContent = muted ? "Audio Off" : "Audio On";
     this.ui.muteButton.setAttribute("aria-pressed", String(muted));
+  }
+
+  private getWinVoiceLineId(): "cleanShot" | "disarm" | "headshot" | "bountyClaimed" {
+    const shotResult = this.state.result?.stats.shotResult;
+
+    if (shotResult === "head") {
+      return "headshot";
+    }
+
+    if (shotResult === "disarm") {
+      return "disarm";
+    }
+
+    if (shotResult === "torso") {
+      return "cleanShot";
+    }
+
+    return "bountyClaimed";
   }
 
   private showPlayerMuzzleFlash(): void {
@@ -1494,6 +1513,7 @@ export class Game {
       this.boardMode = mode;
       this.lastShopMessage = "";
       this.renderBountyBoard();
+      this.audio.playVoice(mode === "shop" ? "shopWelcome" : "welcomeBoard");
       this.updateOverlay();
     });
 

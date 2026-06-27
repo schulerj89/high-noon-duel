@@ -1,0 +1,54 @@
+[
+  {
+    "id": "ready",
+    "text": "Ready..."
+  },
+  {
+    "id": "steady",
+    "text": "Steady..."
+  },
+  {
+    "id": "draw",
+    "text": "Draw!"
+  },
+  {
+    "id": "tooSoon",
+    "text": "Too soon, partner."
+  },
+  {
+    "id": "cleanShot",
+    "text": "Clean shot."
+  },
+  {
+    "id": "miss",
+    "text": "You missed!"
+  },
+  {
+    "id": "enemyFaster",
+    "text": "He beat you to the iron."
+  },
+  {
+    "id": "bountyClaimed",
+    "text": "Bounty claimed."
+  },
+  {
+    "id": "tryAgainPartner",
+    "text": "Try again, partner."
+  },
+  {
+    "id": "disarm",
+    "text": "Disarmed!"
+  },
+  {
+    "id": "headshot",
+    "text": "Dead center."
+  },
+  {
+    "id": "welcomeBoard",
+    "text": "Pick your bounty."
+  },
+  {
+    "id": "shopWelcome",
+    "text": "Spend wisely."
+  }
+]

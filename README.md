@@ -36,6 +36,38 @@ npm run dev
 npm run build
 ```
 
+## Voice Generation
+
+Voiceover generation is an optional local developer workflow. It is not browser code, and `ELEVENLABS_API_KEY` must never be committed or exposed to Vite.
+
+Create local environment variables with either approach:
+
+```bash
+cp .env.example .env
+```
+
+Then set `ELEVENLABS_API_KEY` in `.env`, or export variables in your shell. The defaults are:
+
+```bash
+ELEVENLABS_VOICE_ID=ruirxsoakN0GWmGNIo04
+ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+```
+
+With the local Windows secret broker:
+
+```bash
+agent-secret with ELEVENLABS_API_KEY -- node scripts/generate-voiceovers.mjs
+```
+
+Useful options:
+
+```bash
+node scripts/generate-voiceovers.mjs --only draw
+node scripts/generate-voiceovers.mjs --force
+```
+
+The script reads `scripts/voice-lines.json`, skips existing files by default, and writes generated MP3 files to `public/audio/voice/`.
+
 ## Controls
 
 - Mouse move: aim after DRAW.

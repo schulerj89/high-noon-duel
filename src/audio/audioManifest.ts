@@ -7,7 +7,11 @@ export type VoiceAudioId =
   | "miss"
   | "enemyFaster"
   | "bountyClaimed"
-  | "tryAgainPartner";
+  | "tryAgainPartner"
+  | "disarm"
+  | "headshot"
+  | "welcomeBoard"
+  | "shopWelcome";
 
 export type SfxAudioId =
   | "gunshotPlayer"
@@ -35,15 +39,19 @@ export interface AudioManifest {
 
 export const AUDIO_MANIFEST: AudioManifest = {
   voice: {
-    ready: "/audio/voice-ready.mp3",
-    steady: "/audio/voice-steady.mp3",
-    draw: "/audio/voice-draw.mp3",
-    tooSoon: "/audio/voice-too-soon.mp3",
-    cleanShot: "/audio/voice-clean-shot.mp3",
-    miss: "/audio/voice-miss.mp3",
-    enemyFaster: "/audio/voice-enemy-faster.mp3",
-    bountyClaimed: "/audio/voice-bounty-claimed.mp3",
-    tryAgainPartner: "/audio/voice-try-again-partner.mp3"
+    ready: "/audio/voice/ready.mp3",
+    steady: "/audio/voice/steady.mp3",
+    draw: "/audio/voice/draw.mp3",
+    tooSoon: "/audio/voice/tooSoon.mp3",
+    cleanShot: "/audio/voice/cleanShot.mp3",
+    miss: "/audio/voice/miss.mp3",
+    enemyFaster: "/audio/voice/enemyFaster.mp3",
+    bountyClaimed: "/audio/voice/bountyClaimed.mp3",
+    tryAgainPartner: "/audio/voice/tryAgainPartner.mp3",
+    disarm: "/audio/voice/disarm.mp3",
+    headshot: "/audio/voice/headshot.mp3",
+    welcomeBoard: "/audio/voice/welcomeBoard.mp3",
+    shopWelcome: "/audio/voice/shopWelcome.mp3"
   },
   sfx: {
     gunshotPlayer: "/audio/sfx-gunshot-player.mp3",
