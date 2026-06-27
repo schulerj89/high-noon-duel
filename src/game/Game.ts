@@ -69,6 +69,7 @@ import {
   clearSavedProgression,
   createDefaultProgression,
   derivePlayerStats,
+  exportProgressionToJson,
   formatConditionDuration,
   getActiveConditionDefinitions,
   getDefaultCampaignContract,
@@ -78,6 +79,8 @@ import {
   getTownBossStatusText,
   getTownProgress,
   getUnlockedShopTier,
+  hasSavedProgression,
+  importProgressionFromJson,
   isTownUnlocked,
   loadProgression,
   purchaseUpgrade,
@@ -91,6 +94,12 @@ import {
   type PlayerProgression,
   type PlayerStats
 } from "./progression";
+import {
+  loadGameSettings,
+  saveGameSettings,
+  updateGameSettings,
+  type GameSettings
+} from "./settings";
 import {
   formatShotResult,
   getEnemyFireAt,
@@ -117,8 +126,11 @@ import {
   startDuel
 } from "./state";
 import type { DrawAnimationStyle } from "./tells";
+import { createTitleScreen } from "../ui/titleScreen";
+import { createSettingsMenu } from "../ui/settingsMenu";
 import { createTownSelector } from "../ui/townSelector";
 import { createPracticeMenu } from "../ui/practiceMenu";
+import { getSaveSummaryText } from "../ui/saveManagement";
 import {
   ACCURACY_DRILL_DURATION_MS,
   ACCURACY_DRILL_MAX_SHOTS,
@@ -172,6 +184,7 @@ interface VolumeControlElements {
 
 type Vec3Tuple = [number, number, number];
 type BoardMode = "bounties" | "shop" | "practice";
+type ScreenMode = "title" | "board" | "settings" | "credits" | "duel";
 type DuelLossReason = "enemy was faster" | "missed shot";
 
 interface PracticeSession {
@@ -236,6 +249,7 @@ export class Game {
   private readonly devPanel: DevPanel | null;
 
   private progression: PlayerProgression = loadProgression();
+  private settings: GameSettings = loadGameSettings();
   private practiceBests: PracticeBests = loadPracticeBests();
   private practiceSession: PracticeSession | null = null;
   private tuning: TuningOverrides = loadTuningOverrides();
@@ -252,6 +266,9 @@ export class Game {
     this.selectedContract.modifierId
   );
   private boardMode: BoardMode = "bounties";
+  private screenMode: ScreenMode = "title";
+  private settingsReturnScreen: ScreenMode = "title";
+  private settingsReturnBoardMode: BoardMode = "bounties";
   private resizeObserver: ResizeObserver | null = null;
   private animationFrameId: number | null = null;
   private enemyReactionMs: number = DEFAULT_ENEMY.reactionTimeMs;
@@ -278,6 +295,8 @@ export class Game {
   private hitPauseUntil = 0;
   private rewardToastText = "";
   private rewardToastUntil = 0;
+  private saveExportText = "";
+  private saveMessage = "";
   private subtitle: SubtitleState | null = null;
   private readonly queuedSubtitleTimers = new Set<number>();
   private enemyRig: EnemyRig | null = null;
@@ -318,6 +337,7 @@ export class Game {
     );
     this.scene.add(this.camera);
 
+    this.applyAudioSettings();
     this.viewport.append(this.renderer.domElement);
     this.ui = this.createOverlay();
     this.viewport.append(this.ui.overlay);
@@ -330,13 +350,14 @@ export class Game {
     this.root.append(this.viewport);
 
     this.buildScene();
-    this.renderBountyBoard();
+    this.renderTitleScreen();
     this.bindEvents();
     this.handleResize();
+    this.applySettingsToUi();
     this.updateOverlay();
     this.updateMuteButton();
     this.updateAudioSettingsControls();
-    this.playBountyBoardAudio();
+    this.playTitleAudio();
   }
 
   public start(): void {
@@ -423,6 +444,9 @@ export class Game {
 
   private readonly startRound = (): void => {
     const now = performance.now();
+    this.screenMode = "duel";
+    this.practiceSession = null;
+    this.clearPracticeTargets();
     this.applyCurrentEnvironment();
     this.timing = this.createRoundTiming();
     this.state = startDuel(now, this.timing);
@@ -474,7 +498,25 @@ export class Game {
   };
 
   private readonly showBountyBoard = (): void => {
-    this.boardMode = "bounties";
+    this.showBoardScreen("bounties");
+  };
+
+  private renderTitleScreen(): void {
+    this.screenMode = "title";
+    this.practiceSession = null;
+    this.clearPracticeTargets();
+    this.state = createIntroDuelState(performance.now());
+    this.enemyFireAt = null;
+    this.missLossAt = null;
+    this.clearQueuedSubtitles();
+    this.clearSubtitle();
+    this.renderBountyBoard();
+    this.updateOverlay(performance.now());
+  }
+
+  private showBoardScreen(mode: BoardMode): void {
+    this.screenMode = "board";
+    this.boardMode = mode;
     this.practiceSession = null;
     this.clearPracticeTargets();
     this.selectedEnemy = getEnemyById(this.selectedContract.enemyId);
@@ -505,9 +547,10 @@ export class Game {
     this.renderBountyBoard();
     this.playBountyBoardAudio();
     this.updateOverlay(performance.now());
-  };
+  }
 
   private showPracticeMenu(): void {
+    this.screenMode = "board";
     this.boardMode = "practice";
     this.practiceSession = null;
     this.clearPracticeTargets();
@@ -536,6 +579,48 @@ export class Game {
     this.renderBountyBoard();
     this.playBountyBoardAudio();
     this.updateOverlay(performance.now());
+  }
+
+  private showSettingsMenu(returnScreen: ScreenMode = this.screenMode): void {
+    if (this.state.phase === "draw") {
+      return;
+    }
+
+    this.settingsReturnScreen = returnScreen === "settings" ? "title" : returnScreen;
+    this.settingsReturnBoardMode = this.boardMode;
+    this.screenMode = "settings";
+    this.practiceSession = null;
+    this.clearPracticeTargets();
+    this.state = createIntroDuelState(performance.now());
+    this.clearQueuedSubtitles();
+    this.clearSubtitle();
+    this.renderBountyBoard();
+    this.updateOverlay(performance.now());
+  }
+
+  private showCreditsScreen(): void {
+    this.screenMode = "credits";
+    this.practiceSession = null;
+    this.clearPracticeTargets();
+    this.state = createIntroDuelState(performance.now());
+    this.clearQueuedSubtitles();
+    this.clearSubtitle();
+    this.renderBountyBoard();
+    this.updateOverlay(performance.now());
+  }
+
+  private returnFromSettings(): void {
+    if (this.settingsReturnScreen === "title") {
+      this.renderTitleScreen();
+      return;
+    }
+
+    if (this.settingsReturnScreen === "credits") {
+      this.showCreditsScreen();
+      return;
+    }
+
+    this.showBoardScreen(this.settingsReturnBoardMode);
   }
 
   private selectBountyContract(contract: BountyContractDefinition): void {
@@ -593,6 +678,7 @@ export class Game {
     const now = performance.now();
     this.audio.unlock();
     this.audio.playSfx("buttonClick");
+    this.screenMode = "duel";
     this.boardMode = "practice";
     this.clearQueuedSubtitles();
     this.clearSubtitle();
@@ -696,10 +782,20 @@ export class Game {
   }
 
   private createPlayerStats(): PlayerStats {
-    return applyPlayerStatsTuning(
+    const stats = applyPlayerStatsTuning(
       derivePlayerStats(this.progression.ownedUpgrades, this.progression.activeConditions),
       this.tuning
     );
+
+    if (!this.settings.difficultyAssist) {
+      return stats;
+    }
+
+    return {
+      ...stats,
+      shotTimingBonusMs: stats.shotTimingBonusMs + 35,
+      hitZoneScale: stats.hitZoneScale + 0.08
+    };
   }
 
   private getEffectiveEnemyTuning(): EffectiveEnemyTuning {
@@ -851,8 +947,7 @@ export class Game {
     this.lastPlayerShotAt = now;
     this.showPlayerMuzzleFlash();
     this.audio.playSfx("bodyHit");
-    this.hitPauseStartedAt = now;
-    this.hitPauseUntil = now + GAME_CONFIG.timing.hitPauseMs;
+    this.startHitPause(now);
     this.state = resolvePlayerHit(
       drawState,
       now,
@@ -973,7 +1068,8 @@ export class Game {
 
   private readonly handleMuteButtonClick = (): void => {
     this.audio.unlock();
-    const muted = this.audio.toggleMute();
+    const muted = !this.settings.muted;
+    this.updateSettings({ muted });
 
     if (!muted) {
       this.audio.playSfx("buttonClick");
@@ -989,23 +1085,19 @@ export class Game {
   };
 
   private readonly handleMasterVolumeInput = (): void => {
-    this.audio.setMasterVolume(this.readSliderVolume(this.ui.masterVolumeInput));
-    this.updateAudioSettingsControls();
+    this.updateSettings({ masterVolume: this.readSliderVolume(this.ui.masterVolumeInput) });
   };
 
   private readonly handleMusicVolumeInput = (): void => {
-    this.audio.setMusicVolume(this.readSliderVolume(this.ui.musicVolumeInput));
-    this.updateAudioSettingsControls();
+    this.updateSettings({ musicVolume: this.readSliderVolume(this.ui.musicVolumeInput) });
   };
 
   private readonly handleSfxVolumeInput = (): void => {
-    this.audio.setSfxVolume(this.readSliderVolume(this.ui.sfxVolumeInput));
-    this.updateAudioSettingsControls();
+    this.updateSettings({ sfxVolume: this.readSliderVolume(this.ui.sfxVolumeInput) });
   };
 
   private readonly handleVoiceVolumeInput = (): void => {
-    this.audio.setVoiceVolume(this.readSliderVolume(this.ui.voiceVolumeInput));
-    this.updateAudioSettingsControls();
+    this.updateSettings({ voiceVolume: this.readSliderVolume(this.ui.voiceVolumeInput) });
   };
 
   private readonly handleResize = (): void => {
@@ -1040,6 +1132,22 @@ export class Game {
       return;
     }
 
+    if (event.code === "Escape") {
+      if (this.state.phase === "draw") {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (this.screenMode === "settings") {
+        this.returnFromSettings();
+      } else if (this.screenMode === "title" || this.screenMode === "credits" || this.screenMode === "board") {
+        this.showSettingsMenu(this.screenMode);
+      }
+
+      return;
+    }
+
     if (isEditableEventTarget(event.target)) {
       return;
     }
@@ -1049,20 +1157,24 @@ export class Game {
       this.ui.crosshair.style.left = "50%";
       this.ui.crosshair.style.top = "50%";
 
-      if (this.state.phase === "resolved") {
+      if (this.state.phase === "resolved" && this.screenMode === "duel") {
         if (this.practiceSession) {
           this.startPracticeMode(this.practiceSession.mode);
         } else {
           this.startRound();
         }
       } else if (this.state.phase === "intro") {
-        if (this.boardMode !== "practice") {
+        if (this.screenMode === "board" && this.boardMode !== "practice") {
           this.startRound();
         }
       }
     }
 
     if (event.code === "KeyR") {
+      if (this.screenMode !== "duel") {
+        return;
+      }
+
       if (this.practiceSession) {
         this.startPracticeMode(this.practiceSession.mode);
       } else {
@@ -1076,8 +1188,7 @@ export class Game {
     }
 
     if (event.code === "KeyM") {
-      this.audio.toggleMute();
-      this.updateMuteButton();
+      this.updateSettings({ muted: !this.settings.muted });
     }
   };
 
@@ -1203,8 +1314,7 @@ export class Game {
 
     this.lastLuckyCharmTriggered = timing.luckyCharmTriggered;
     this.audio.playSfx("bodyHit");
-    this.hitPauseStartedAt = now;
-    this.hitPauseUntil = now + GAME_CONFIG.timing.hitPauseMs;
+    this.startHitPause(now);
     this.state = resolvePlayerHit(
       this.state,
       now,
@@ -1287,8 +1397,7 @@ export class Game {
 
     if (hitDisarm) {
       this.audio.playSfx("bodyHit");
-      this.hitPauseStartedAt = now;
-      this.hitPauseUntil = now + GAME_CONFIG.timing.hitPauseMs;
+      this.startHitPause(now);
     } else {
       this.showMissDust();
       this.audio.playSfx("dustImpact");
@@ -1325,8 +1434,7 @@ export class Game {
       session.hits += 1;
       session.targetPoints += spec.points;
       this.audio.playSfx("bodyHit");
-      this.hitPauseStartedAt = now;
-      this.hitPauseUntil = now + 60;
+      this.startHitPause(now, 60);
     } else {
       session.misses += 1;
       this.lastMissAt = now;
@@ -1716,6 +1824,28 @@ export class Game {
     this.updateOverlay();
   }
 
+  private continueSavedGame(): void {
+    this.audio.unlock();
+    this.audio.playSfx("buttonClick");
+    this.progression = loadProgression();
+    this.syncProgressionState("Save loaded.");
+    this.showBountyBoard();
+  }
+
+  private startNewGame(): void {
+    if (!window.confirm("Start a new game and reset current progress?")) {
+      return;
+    }
+
+    this.audio.unlock();
+    this.audio.playSfx("buttonClick");
+    clearSavedProgression();
+    this.progression = createDefaultProgression();
+    saveProgression(this.progression);
+    this.syncProgressionState("New game started.");
+    this.showBountyBoard();
+  }
+
   private resetProgression(): void {
     if (!window.confirm("Reset money, upgrades, conditions, and duel record?")) {
       return;
@@ -1725,6 +1855,13 @@ export class Game {
     clearSavedProgression();
     this.progression = createDefaultProgression();
     saveProgression(this.progression);
+    this.syncProgressionState("Progress reset.");
+    this.renderBountyBoard();
+    this.applyCurrentEnvironment();
+    this.updateOverlay();
+  }
+
+  private syncProgressionState(message = ""): void {
     this.playerStats = this.createPlayerStats();
     this.selectedTown = getSelectedTown(this.progression.campaign);
     this.selectedContract = getDefaultCampaignContract(this.progression.campaign);
@@ -1732,13 +1869,67 @@ export class Game {
     this.selectedModifier = getDuelModifier(this.selectedContract.modifierId);
     this.boardMode = "bounties";
     this.lastMoneyEarned = 0;
-    this.lastShopMessage = "Progress reset.";
+    this.lastShopMessage = message;
     this.lastConditionChanges = [];
     this.lastCampaignChanges = [];
     this.lastCampaignReward = 0;
+    this.practiceSession = null;
+    this.clearPracticeTargets();
     this.rebuildEnemy();
+  }
+
+  private async exportSave(): Promise<void> {
+    this.audio.playSfx("buttonClick");
+    const json = exportProgressionToJson(this.progression);
+    this.saveExportText = json;
+
+    try {
+      await navigator.clipboard.writeText(json);
+      this.saveMessage = "Save copied to clipboard.";
+    } catch {
+      this.saveMessage = "Clipboard unavailable. Save JSON shown below.";
+    }
+
+    this.renderBountyBoard();
+    this.updateOverlay();
+  }
+
+  private importSave(json: string): void {
+    this.audio.playSfx("buttonClick");
+    this.saveExportText = json;
+    const progression = importProgressionFromJson(json);
+
+    if (!progression) {
+      this.saveMessage = "Import failed. Paste a valid High Noon Duel save JSON.";
+      this.renderBountyBoard();
+      this.updateOverlay();
+      return;
+    }
+
+    this.progression = progression;
+    saveProgression(this.progression);
+    this.syncProgressionState("Save imported.");
+    this.saveMessage = "Save imported.";
     this.renderBountyBoard();
     this.applyCurrentEnvironment();
+    this.updateOverlay();
+  }
+
+  private updateSettings(patch: Partial<GameSettings>): void {
+    this.settings = updateGameSettings(this.settings, patch);
+    saveGameSettings(this.settings);
+    this.applyAudioSettings();
+    this.applySettingsToUi();
+    this.playerStats = this.createPlayerStats();
+    this.updateHitZoneScale();
+    this.updateHitBoxVisibility();
+
+    if (!this.settings.subtitlesEnabled) {
+      this.clearSubtitle();
+    }
+
+    this.updateMuteButton();
+    this.updateAudioSettingsControls();
     this.updateOverlay();
   }
 
@@ -1761,6 +1952,17 @@ export class Game {
       this.playVoiceWithSubtitle("draw", { durationMs: 850 });
       this.audio.playSfx("revolverCock");
     }
+  }
+
+  private playTitleAudio(): void {
+    this.audio.stopMusic("duelTensionLoop", 450);
+    this.audio.stopMusic("victorySting", 100);
+    this.audio.stopMusic("defeatSting", 100);
+    this.audio.playMusic("bountyBoardLoop", {
+      loop: true,
+      fadeInMs: 500,
+      volume: 0.9
+    });
   }
 
   private playBountyBoardAudio(): void {
@@ -1843,6 +2045,11 @@ export class Game {
     options: { speaker?: string; durationMs?: number } = {}
   ): void {
     this.audio.playVoice(id);
+
+    if (!this.settings.subtitlesEnabled) {
+      return;
+    }
+
     this.showSubtitle({
       speaker: options.speaker ?? "Announcer",
       line: VOICE_SUBTITLES[id],
@@ -1867,6 +2074,11 @@ export class Game {
     const audioUrl = `/audio/voice/enemies/${audioId}.mp3`;
 
     this.audio.playVoiceFile(audioId, audioUrl);
+
+    if (!this.settings.subtitlesEnabled) {
+      return;
+    }
+
     this.showSubtitle({
       speaker: this.selectedEnemy.name,
       line,
@@ -1910,6 +2122,10 @@ export class Game {
     durationMs: number;
     tone: SubtitleState["tone"];
   }): void {
+    if (!this.settings.subtitlesEnabled) {
+      return;
+    }
+
     this.subtitle = {
       speaker: input.speaker,
       line: input.line,
@@ -1995,19 +2211,37 @@ export class Game {
     this.ui.rewardToast.textContent = "";
   }
 
+  private applyAudioSettings(): void {
+    this.audio.setMasterVolume(this.settings.masterVolume);
+    this.audio.setMusicVolume(this.settings.musicVolume);
+    this.audio.setSfxVolume(this.settings.sfxVolume);
+    this.audio.setVoiceVolume(this.settings.voiceVolume);
+
+    if (this.settings.muted) {
+      this.audio.mute();
+    } else {
+      this.audio.unmute();
+    }
+  }
+
+  private applySettingsToUi(): void {
+    this.viewport.style.setProperty("--reticle-scale", String(this.settings.reticleSize));
+    this.viewport.style.setProperty("--reticle-opacity", String(this.settings.reticleOpacity));
+    this.viewport.style.setProperty("--flash-opacity", String(this.settings.screenFlashAmount));
+    this.viewport.classList.toggle("is-reduced-motion", this.settings.reducedMotion);
+  }
+
   private updateMuteButton(): void {
-    const muted = this.audio.isMuted();
+    const muted = this.settings.muted;
     this.ui.muteButton.textContent = muted ? "Audio Off" : "Audio On";
     this.ui.muteButton.setAttribute("aria-pressed", String(muted));
   }
 
   private updateAudioSettingsControls(): void {
-    const preferences = this.audio.getPreferences();
-
-    this.setVolumeControlValue(this.ui.masterVolumeInput, this.ui.masterVolumeValue, preferences.masterVolume);
-    this.setVolumeControlValue(this.ui.musicVolumeInput, this.ui.musicVolumeValue, preferences.musicVolume);
-    this.setVolumeControlValue(this.ui.sfxVolumeInput, this.ui.sfxVolumeValue, preferences.sfxVolume);
-    this.setVolumeControlValue(this.ui.voiceVolumeInput, this.ui.voiceVolumeValue, preferences.voiceVolume);
+    this.setVolumeControlValue(this.ui.masterVolumeInput, this.ui.masterVolumeValue, this.settings.masterVolume);
+    this.setVolumeControlValue(this.ui.musicVolumeInput, this.ui.musicVolumeValue, this.settings.musicVolume);
+    this.setVolumeControlValue(this.ui.sfxVolumeInput, this.ui.sfxVolumeValue, this.settings.sfxVolume);
+    this.setVolumeControlValue(this.ui.voiceVolumeInput, this.ui.voiceVolumeValue, this.settings.voiceVolume);
   }
 
   private setVolumeControlValue(
@@ -2053,6 +2287,19 @@ export class Game {
     if (this.muzzleFlash) {
       this.muzzleFlash.visible = true;
     }
+  }
+
+  private startHitPause(now: number, durationMs = GAME_CONFIG.timing.hitPauseMs): void {
+    const adjustedDuration = durationMs * (this.settings.reducedMotion ? 0.25 : 1);
+
+    if (adjustedDuration <= 8) {
+      this.hitPauseStartedAt = null;
+      this.hitPauseUntil = 0;
+      return;
+    }
+
+    this.hitPauseStartedAt = now;
+    this.hitPauseUntil = now + adjustedDuration;
   }
 
   private getHitZoneUnderReticle(): HitZoneDefinition | null {
@@ -2159,7 +2406,9 @@ export class Game {
       roundStartedAt: this.state.roundStartedAt,
       scheduledDrawAt: this.state.scheduledDrawAt,
       lastShotAt: lastShotAt > 0 ? lastShotAt : undefined,
-      hitPauseActive: now < this.hitPauseUntil
+      hitPauseActive: now < this.hitPauseUntil,
+      cameraShakeAmount: this.settings.cameraShakeAmount * (this.settings.reducedMotion ? 0.2 : 1),
+      motionAmount: this.settings.reducedMotion ? 0.28 : 1
     });
     const shakeAge = lastShotAt > 0 ? now - lastShotAt : Number.POSITIVE_INFINITY;
     const shakeMultiplier =
@@ -2366,7 +2615,7 @@ export class Game {
       mesh.scale.setScalar(scale);
 
       const material = mesh.material;
-      const opacity = 0.35 + flashProgress * 0.65;
+      const opacity = (0.35 + flashProgress * 0.65) * this.settings.screenFlashAmount;
 
       if (Array.isArray(material)) {
         for (const item of material) {
@@ -2902,11 +3151,10 @@ export class Game {
     audioSettingsPanel.className = "audio-settings-panel";
     audioSettingsPanel.hidden = true;
 
-    const audioPreferences = this.audio.getPreferences();
-    const masterVolume = this.createVolumeControl("Master", audioPreferences.masterVolume);
-    const musicVolume = this.createVolumeControl("Music", audioPreferences.musicVolume);
-    const sfxVolume = this.createVolumeControl("SFX", audioPreferences.sfxVolume);
-    const voiceVolume = this.createVolumeControl("Voice", audioPreferences.voiceVolume);
+    const masterVolume = this.createVolumeControl("Master", this.settings.masterVolume);
+    const musicVolume = this.createVolumeControl("Music", this.settings.musicVolume);
+    const sfxVolume = this.createVolumeControl("SFX", this.settings.sfxVolume);
+    const voiceVolume = this.createVolumeControl("Voice", this.settings.voiceVolume);
     audioSettingsPanel.append(
       masterVolume.row,
       musicVolume.row,
@@ -3046,6 +3294,47 @@ export class Game {
   private renderBountyBoard(): void {
     this.ui.bountyBoard.replaceChildren();
 
+    if (this.screenMode === "title") {
+      this.ui.bountyBoard.append(
+        createTitleScreen({
+          hasSave: hasSavedProgression(),
+          saveSummary: getSaveSummaryText(this.progression),
+          onContinue: () => this.continueSavedGame(),
+          onNewGame: () => this.startNewGame(),
+          onPracticeRange: () => this.showPracticeMenu(),
+          onSettings: () => this.showSettingsMenu("title"),
+          onCredits: () => this.showCreditsScreen()
+        })
+      );
+      return;
+    }
+
+    if (this.screenMode === "settings") {
+      this.ui.bountyBoard.append(
+        createSettingsMenu({
+          settings: this.settings,
+          onBack: () => this.returnFromSettings(),
+          onSettingsChange: (settings) => this.updateSettings(settings),
+          saveManagement: {
+            progression: this.progression,
+            message: this.saveMessage,
+            exportText: this.saveExportText,
+            onExport: () => {
+              void this.exportSave();
+            },
+            onImport: (json) => this.importSave(json),
+            onReset: () => this.resetProgression()
+          }
+        })
+      );
+      return;
+    }
+
+    if (this.screenMode === "credits") {
+      this.ui.bountyBoard.append(this.createCreditsScreen());
+      return;
+    }
+
     const heading = document.createElement("div");
     heading.className = "bounty-heading";
 
@@ -3065,13 +3354,21 @@ export class Game {
     const bountyButton = this.createBoardModeButton("Bounties", "bounties");
     const shopButton = this.createBoardModeButton("Shop", "shop");
     const practiceButton = this.createBoardModeButton("Practice Range", "practice");
+    const settingsButton = document.createElement("button");
+    settingsButton.className = "board-tab";
+    settingsButton.type = "button";
+    settingsButton.textContent = "Settings";
+    settingsButton.addEventListener("click", () => {
+      this.audio.playSfx("buttonClick");
+      this.showSettingsMenu("board");
+    });
     const resetButton = document.createElement("button");
     resetButton.className = "board-reset";
     resetButton.type = "button";
     resetButton.textContent = "Reset Progress";
     resetButton.addEventListener("click", () => this.resetProgression());
 
-    boardActions.append(bountyButton, shopButton, practiceButton, resetButton);
+    boardActions.append(bountyButton, shopButton, practiceButton, settingsButton, resetButton);
     heading.append(title, copy, boardActions);
 
     if (this.boardMode === "practice") {
@@ -3106,6 +3403,56 @@ export class Game {
     }
 
     this.ui.bountyBoard.append(heading, townSelector, progressSummary, list);
+  }
+
+  private createCreditsScreen(): HTMLDivElement {
+    const screen = document.createElement("div");
+    screen.className = "credits-screen";
+
+    const title = document.createElement("h1");
+    title.textContent = "Credits";
+
+    const copy = document.createElement("p");
+    copy.textContent =
+      "High Noon Duel is a procedural Three.js quick draw prototype built with TypeScript, Vite, and local-only assets.";
+
+    const list = document.createElement("div");
+    list.className = "credits-list";
+
+    for (const [label, value] of [
+      ["Design", "Western quick draw duel loop, bounty progression, practice range"],
+      ["Rendering", "Procedural Three.js primitives"],
+      ["Audio", "Local files from public/audio when available"],
+      ["Development", "Small, data-driven iterations"]
+    ] as const) {
+      const row = document.createElement("div");
+      row.className = "credits-row";
+
+      const labelEl = document.createElement("span");
+      labelEl.textContent = label;
+
+      const valueEl = document.createElement("strong");
+      valueEl.textContent = value;
+
+      row.append(labelEl, valueEl);
+      list.append(row);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "title-actions is-inline";
+
+    const back = document.createElement("button");
+    back.className = "title-button";
+    back.type = "button";
+    back.textContent = "Back";
+    back.addEventListener("click", () => {
+      this.audio.playSfx("buttonClick");
+      this.renderTitleScreen();
+    });
+
+    actions.append(back);
+    screen.append(title, copy, list, actions);
+    return screen;
   }
 
   private createBountyPoster(contract: BountyContractDefinition): HTMLButtonElement {
@@ -3494,7 +3841,10 @@ export class Game {
   private updateOverlay(now = performance.now()): void {
     this.settleDuelResultIfNeeded();
     const practiceResult = this.practiceSession?.result;
-    const isBoard = this.state.phase === "intro" && this.practiceSession === null;
+    const isBoard =
+      this.state.phase === "intro" &&
+      this.practiceSession === null &&
+      this.screenMode !== "duel";
     const isWin = this.state.result?.outcome === "win";
     const isLoss = this.state.result?.outcome === "loss";
     const shotResult = this.state.result?.stats.shotResult;
@@ -3544,8 +3894,9 @@ export class Game {
     this.ui.crosshair.classList.toggle("is-visible", showReticle);
     this.ui.crosshair.classList.toggle("is-hot", showReticle);
     this.viewport.classList.toggle("is-aiming", this.state.phase === "draw");
-    this.viewport.classList.toggle("is-dueling", !isBoard);
+    this.viewport.classList.toggle("is-dueling", !isBoard && this.state.phase !== "resolved");
     this.viewport.classList.toggle("is-hit-pause", now < this.hitPauseUntil);
+    this.viewport.dataset.screen = this.screenMode;
     this.updateSubtitle(now);
     this.updateRewardToast(now);
     this.renderStats();
@@ -3553,6 +3904,18 @@ export class Game {
   }
 
   private getEnemyBadgeText(): string {
+    if (this.screenMode === "title") {
+      return "High Noon Duel";
+    }
+
+    if (this.screenMode === "settings") {
+      return "Settings";
+    }
+
+    if (this.screenMode === "credits") {
+      return "Credits";
+    }
+
     if (this.practiceSession) {
       return `Practice Range: ${this.practiceSession.mode.name}`;
     }
@@ -3813,11 +4176,14 @@ export class Game {
       ["Duel Result", this.state.result.outcome.toUpperCase()],
       ["Modifier", stats.modifierName ?? this.selectedModifier.name],
       ["Shot Result", formatShotResult(stats.shotResult)],
-      ["Reaction Time", formatDuration(stats.playerReactionTimeMs)],
-      ["Enemy Reaction", formatDuration(stats.enemyReactionTimeMs)],
       ["Money Earned", `$${this.lastMoneyEarned}`],
       ["Money", `$${this.progression.money}`]
     ];
+
+    if (this.settings.showReactionTime) {
+      rows.splice(3, 0, ["Reaction Time", formatDuration(stats.playerReactionTimeMs)]);
+      rows.splice(4, 0, ["Enemy Reaction", formatDuration(stats.enemyReactionTimeMs)]);
+    }
 
     if (stats.modifierRewardMultiplier !== undefined && stats.modifierRewardMultiplier !== 1) {
       rows.push(["Reward Multiplier", `x${stats.modifierRewardMultiplier.toFixed(2)}`]);
@@ -3920,7 +4286,7 @@ export class Game {
       ["Best", getPracticeBestSummary(result.modeId, this.practiceBests)]
     ];
 
-    if (result.reactionTimeMs !== undefined) {
+    if (this.settings.showReactionTime && result.reactionTimeMs !== undefined) {
       rows.push(["Reaction Time", formatDuration(result.reactionTimeMs)]);
     }
 

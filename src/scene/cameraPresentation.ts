@@ -8,6 +8,8 @@ export interface CameraPresentationInput {
   scheduledDrawAt: number;
   lastShotAt?: number;
   hitPauseActive: boolean;
+  cameraShakeAmount?: number;
+  motionAmount?: number;
 }
 
 export interface CameraPresentation {
@@ -18,9 +20,10 @@ export interface CameraPresentation {
 
 export function getCameraPresentation(input: CameraPresentationInput): CameraPresentation {
   const duelProgress = getDuelProgress(input);
-  const pushIn = input.phase === "intro" ? 0 : smoothStep(duelProgress) * 0.68;
-  const resultLift = input.phase === "resolved" && input.outcome === "win" ? 0.08 : 0;
-  const lossDrop = input.phase === "resolved" && input.outcome === "loss" ? -0.04 : 0;
+  const motionAmount = input.motionAmount ?? 1;
+  const pushIn = input.phase === "intro" ? 0 : smoothStep(duelProgress) * 0.68 * motionAmount;
+  const resultLift = input.phase === "resolved" && input.outcome === "win" ? 0.08 * motionAmount : 0;
+  const lossDrop = input.phase === "resolved" && input.outcome === "loss" ? -0.04 * motionAmount : 0;
   const shake = getShotShake(input);
 
   return {
@@ -34,7 +37,7 @@ export function getCameraPresentation(input: CameraPresentationInput): CameraPre
       pushIn * 0.08 + resultLift,
       0
     ],
-    fovOffset: -pushIn * 1.15 - (input.hitPauseActive ? 0.6 : 0)
+    fovOffset: -pushIn * 1.15 - (input.hitPauseActive ? 0.6 * motionAmount : 0)
   };
 }
 
@@ -63,7 +66,10 @@ function getShotShake(input: CameraPresentationInput): readonly [number, number]
     return [0, 0];
   }
 
-  const strength = (1 - age / durationMs) * (input.hitPauseActive ? 0.052 : 0.04);
+  const strength =
+    (1 - age / durationMs) *
+    (input.hitPauseActive ? 0.052 : 0.04) *
+    (input.cameraShakeAmount ?? 1);
   return [
     Math.sin(input.now * 0.083) * strength,
     Math.cos(input.now * 0.071) * strength

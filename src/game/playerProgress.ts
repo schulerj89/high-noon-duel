@@ -117,6 +117,10 @@ export function loadProgression(): PlayerProgression {
   }
 }
 
+export function hasSavedProgression(): boolean {
+  return getLocalStorage()?.getItem(PROGRESSION_STORAGE_KEY) !== null;
+}
+
 export function saveProgression(progression: PlayerProgression): void {
   const storage = getLocalStorage();
 
@@ -125,6 +129,19 @@ export function saveProgression(progression: PlayerProgression): void {
   }
 
   storage.setItem(PROGRESSION_STORAGE_KEY, JSON.stringify(progression));
+}
+
+export function exportProgressionToJson(progression: PlayerProgression): string {
+  return JSON.stringify(progression, null, 2);
+}
+
+export function importProgressionFromJson(json: string): PlayerProgression | null {
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return parseProgression(parsed);
+  } catch {
+    return null;
+  }
 }
 
 export function clearSavedProgression(): void {

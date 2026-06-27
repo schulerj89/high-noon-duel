@@ -1,9 +1,12 @@
 export {
   clearSavedProgression,
   createDefaultProgression,
+  exportProgressionToJson,
   formatConditionDuration,
   getActiveConditionDefinitions,
   getOwnedUpgradeNames,
+  hasSavedProgression,
+  importProgressionFromJson,
   loadProgression,
   purchaseUpgrade,
   recordDuelResult,
