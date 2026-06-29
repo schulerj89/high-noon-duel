@@ -1,0 +1,66 @@
+{
+  "generatedAt": "2026-06-29T02:26:58.383Z",
+  "viewport": {
+    "width": 1200,
+    "height": 900
+  },
+  "source": "Vite module capture using src/data/enemies.ts and src/scene/createEnemy.ts",
+  "results": [
+    {
+      "id": "billy-the-shaky",
+      "name": "Billy the Shaky",
+      "title": "Nervous Farmhand",
+      "loaded": [
+        "cowboyMastjie",
+        "revolverQuaterniusB"
+      ],
+      "failed": [],
+      "file": "C:\\Users\\joshs\\Projects\\high-noon-duel\\artifacts\\enemy-screenshots\\billy-the-shaky.png"
+    },
+    {
+      "id": "red-eye-ramos",
+      "name": "Red-Eye Ramos",
+      "title": "Twitchy Bandit",
+      "loaded": [
+        "cowboyMastjie",
+        "revolverQuaterniusB"
+      ],
+      "failed": [],
+      "file": "C:\\Users\\joshs\\Projects\\high-noon-duel\\artifacts\\enemy-screenshots\\red-eye-ramos.png"
+    },
+    {
+      "id": "marshal-graves",
+      "name": "Marshal Graves",
+      "title": "Old Badge",
+      "loaded": [
+        "cowboyMastjie",
+        "revolverQuaterniusB"
+      ],
+      "failed": [],
+      "file": "C:\\Users\\joshs\\Projects\\high-noon-duel\\artifacts\\enemy-screenshots\\marshal-graves.png"
+    },
+    {
+      "id": "dust-widow",
+      "name": "Dust Widow",
+      "title": "Trick Shooter",
+      "loaded": [
+        "cowgirlMastjie",
+        "revolverQuaterniusB"
+      ],
+      "failed": [],
+      "file": "C:\\Users\\joshs\\Projects\\high-noon-duel\\artifacts\\enemy-screenshots\\dust-widow.png"
+    },
+    {
+      "id": "the-black-hat",
+      "name": "The Black Hat",
+      "title": "Bounty Board Boss",
+      "loaded": [
+        "cowboyMastjie",
+        "revolverQuaterniusB"
+      ],
+      "failed": [],
+      "file": "C:\\Users\\joshs\\Projects\\high-noon-duel\\artifacts\\enemy-screenshots\\the-black-hat.png"
+    }
+  ],
+  "console": []
+}
