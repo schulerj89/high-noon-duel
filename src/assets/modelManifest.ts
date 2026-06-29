@@ -29,6 +29,15 @@ export interface TownModelPlacement {
   targetHeight: number;
 }
 
+export interface EnemyCharacterModelBinding {
+  assetId: ModelAssetId;
+  position: readonly [number, number, number];
+  rotationY: number;
+  targetHeight: number;
+  materialTint: string;
+  materialTintStrength: number;
+}
+
 export const MODEL_ASSETS: Record<ModelAssetId, ModelAssetDefinition> = {
   cowboyMastjie: {
     id: "cowboyMastjie",
@@ -145,12 +154,47 @@ export const MODEL_ASSETS: Record<ModelAssetId, ModelAssetDefinition> = {
 export const PLAYER_GUN_MODEL_ID: ModelAssetId = "revolverQuaterniusA";
 export const ENEMY_GUN_MODEL_ID: ModelAssetId = "revolverQuaterniusB";
 
-export const ENEMY_CHARACTER_MODEL_BY_ID: Record<string, ModelAssetId> = {
-  "billy-the-shaky": "cowboyMastjie",
-  "red-eye-ramos": "cowboyMastjie",
-  "marshal-graves": "cowboyMastjie",
-  "dust-widow": "cowgirlMastjie",
-  "the-black-hat": "cowboyMastjie"
+export const ENEMY_CHARACTER_MODEL_BY_ID: Record<string, EnemyCharacterModelBinding> = {
+  "billy-the-shaky": {
+    assetId: "cowboyMastjie",
+    position: [0, 0, 0],
+    rotationY: 0,
+    targetHeight: 2.08,
+    materialTint: "#dfc67a",
+    materialTintStrength: 0.08
+  },
+  "red-eye-ramos": {
+    assetId: "cowboyMastjie",
+    position: [0, 0, 0],
+    rotationY: 0,
+    targetHeight: 2.18,
+    materialTint: "#8e342f",
+    materialTintStrength: 0.2
+  },
+  "marshal-graves": {
+    assetId: "cowboyMastjie",
+    position: [0, 0, 0],
+    rotationY: 0,
+    targetHeight: 2.28,
+    materialTint: "#2f3d46",
+    materialTintStrength: 0.22
+  },
+  "dust-widow": {
+    assetId: "cowgirlMastjie",
+    position: [0, 0, 0],
+    rotationY: 0,
+    targetHeight: 2.16,
+    materialTint: "#3f4563",
+    materialTintStrength: 0.16
+  },
+  "the-black-hat": {
+    assetId: "cowboyMastjie",
+    position: [0, 0, 0],
+    rotationY: 0,
+    targetHeight: 2.32,
+    materialTint: "#171514",
+    materialTintStrength: 0.46
+  }
 };
 
 export const TOWN_MODEL_PLACEMENTS: readonly TownModelPlacement[] = [

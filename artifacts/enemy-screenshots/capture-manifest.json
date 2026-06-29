@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-06-29T02:26:58.383Z",
+  "generatedAt": "2026-06-29T02:40:37.261Z",
   "viewport": {
     "width": 1200,
     "height": 900
   },
-  "source": "Vite module capture using src/data/enemies.ts and src/scene/createEnemy.ts",
+  "source": "Vite module capture using current model bindings and hidden procedural body layer",
   "results": [
     {
       "id": "billy-the-shaky",

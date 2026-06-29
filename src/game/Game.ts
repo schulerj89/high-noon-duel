@@ -5,6 +5,7 @@ import {
   ENEMY_GUN_MODEL_ID,
   PLAYER_GUN_MODEL_ID,
   TOWN_MODEL_PLACEMENTS,
+  type EnemyCharacterModelBinding,
   type TownModelPlacement
 } from "../assets/modelManifest";
 import { AudioManager } from "../audio/AudioManager";
@@ -2913,10 +2914,10 @@ export class Game {
       return;
     }
 
-    const characterModelId = ENEMY_CHARACTER_MODEL_BY_ID[enemy.id];
+    const characterModel = ENEMY_CHARACTER_MODEL_BY_ID[enemy.id];
 
-    if (characterModelId) {
-      void this.addImportedEnemyCharacter(rig, characterModelId, requestId);
+    if (characterModel) {
+      void this.addImportedEnemyCharacter(rig, enemy, characterModel, requestId);
     }
 
     void this.addImportedEnemyGun(rig, requestId);
@@ -2924,10 +2925,11 @@ export class Game {
 
   private async addImportedEnemyCharacter(
     rig: EnemyRig,
-    modelId: NonNullable<(typeof ENEMY_CHARACTER_MODEL_BY_ID)[string]>,
+    enemy: EnemyDefinition,
+    binding: EnemyCharacterModelBinding,
     requestId: number
   ): Promise<void> {
-    const model = await this.models.clone(modelId, {
+    const model = await this.models.clone(binding.assetId, {
       castShadow: true,
       receiveShadow: true
     });
@@ -2942,10 +2944,12 @@ export class Game {
       return;
     }
 
-    model.name = `enemy-model-${modelId}`;
-    model.rotation.y = Math.PI;
-    this.fitModelToHeight(model, 2.15);
-    model.position.set(0, 0, -0.08);
+    model.name = `enemy-model-${binding.assetId}`;
+    model.rotation.y = binding.rotationY;
+    this.fitModelToHeight(model, binding.targetHeight);
+    model.position.set(binding.position[0], binding.position[1], binding.position[2]);
+    this.applyEnemyCharacterModelStyle(model, enemy, binding);
+    this.setProceduralEnemyBodyVisible(rig, false);
     rig.root.add(model);
   }
 
@@ -2971,6 +2975,30 @@ export class Game {
     model.position.set(0.01, -0.02, 0.14);
     this.hideProceduralGunParts(rig.gun);
     rig.gun.add(model);
+  }
+
+  private applyEnemyCharacterModelStyle(
+    model: THREE.Object3D,
+    enemy: EnemyDefinition,
+    binding: EnemyCharacterModelBinding
+  ): void {
+    const tint = new THREE.Color(binding.materialTint || enemy.visual.coatColor);
+    const strength = THREE.MathUtils.clamp(binding.materialTintStrength, 0, 1);
+
+    model.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) {
+        return;
+      }
+
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+
+      for (const material of materials) {
+        if ("color" in material && material.color instanceof THREE.Color) {
+          material.color.lerp(tint, strength);
+          material.needsUpdate = true;
+        }
+      }
+    });
   }
 
   private updateEnemyVisual(): void {
@@ -3321,12 +3349,27 @@ export class Game {
     }
   }
 
-  private hideProceduralGunParts(gun: THREE.Group): void {
-    for (const child of gun.children) {
-      if (child !== this.enemyMuzzleFlash && child.name !== "enemy-muzzle-flash") {
-        child.visible = false;
+  private setProceduralEnemyBodyVisible(rig: EnemyRig, visible: boolean): void {
+    rig.root.traverse((object) => {
+      if (
+        object instanceof THREE.Mesh &&
+        object.userData.proceduralEnemyVisual === true &&
+        object.userData.proceduralEnemyGun !== true
+      ) {
+        object.visible = visible;
       }
-    }
+    });
+  }
+
+  private hideProceduralGunParts(gun: THREE.Group): void {
+    gun.traverse((object) => {
+      if (
+        object instanceof THREE.Mesh &&
+        object.userData.proceduralEnemyGun === true
+      ) {
+        object.visible = false;
+      }
+    });
   }
 
   private fitModelToHeight(model: THREE.Object3D, targetHeight: number): void {

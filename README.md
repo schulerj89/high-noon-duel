@@ -84,7 +84,7 @@ This writes WAV files into `public/audio/`. Western music tracks are sourced MP3
 
 Optional GLB assets live in `public/models/`. Current checked-in models are CC0 assets from Poly Pizza creators including mastjie, Quaternius, Kenney, and CreativeTrio. See `public/models/README.md` for source URLs, file sizes, and conversion notes.
 
-Imported models are visual-only. The duel still uses procedural fallbacks and existing hit zones for gameplay readability.
+Imported models are visual-only. Character GLBs replace the visible procedural body when they load, while the procedural rig still drives hit zones, hand/gun tells, and fallback rendering.
 
 ## Controls
 

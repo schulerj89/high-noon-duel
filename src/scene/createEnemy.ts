@@ -161,6 +161,10 @@ export function createEnemy(enemy: EnemyDefinition): EnemyRig {
     if (object instanceof THREE.Mesh) {
       object.castShadow = true;
       object.receiveShadow = true;
+
+      if (object !== muzzleFlash) {
+        object.userData.proceduralEnemyVisual = true;
+      }
     }
   });
 
@@ -369,15 +373,18 @@ function addRevolver(
 ): THREE.Mesh {
   const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.025 * heightScale, 0.03 * heightScale, 0.34 * heightScale, 10), materials.metal);
   barrel.name = "enemy-gun-barrel";
+  barrel.userData.proceduralEnemyGun = true;
   barrel.rotation.x = Math.PI / 2;
   barrel.position.set(0, -0.02 * heightScale, 0.18 * heightScale);
 
   const chamber = new THREE.Mesh(new THREE.CylinderGeometry(0.07 * heightScale, 0.07 * heightScale, 0.08 * heightScale, 12), materials.metal);
   chamber.name = "enemy-gun-chamber";
+  chamber.userData.proceduralEnemyGun = true;
   chamber.rotation.x = Math.PI / 2;
   chamber.position.set(0, -0.02 * heightScale, 0.03 * heightScale);
 
   const grip = createBox("enemy-gun-grip", [0.07 * heightScale, 0.17 * heightScale, 0.055 * heightScale], materials.leather);
+  grip.userData.proceduralEnemyGun = true;
   grip.position.set(0.035 * heightScale, -0.12 * heightScale, -0.04 * heightScale);
   grip.rotation.z = -0.32;
 
