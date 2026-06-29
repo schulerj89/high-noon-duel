@@ -18,6 +18,7 @@ High Noon Duel is a stylized browser-based western quick draw game built with Th
 - Miss handling with delayed enemy punish shot.
 - Result stats for reaction time, shot result, duel result, money earned, current money, and style bonuses.
 - Procedural first-person revolver, enemy silhouette, buildings, barrels, dust, lighting, and muzzle flashes.
+- Optional CC0 GLB visual accents for enemies, revolvers, buildings, and town props with procedural fallbacks.
 
 ## Planned Iterations
 
@@ -78,6 +79,12 @@ npm run generate:audio
 ```
 
 This writes WAV files into `public/audio/`. Western music tracks are sourced MP3 files in `public/audio/music/`; see `public/audio/CREDITS.md` for attribution. The game uses local files only at runtime.
+
+## Local Model Assets
+
+Optional GLB assets live in `public/models/`. Current checked-in models are CC0 assets from Poly Pizza creators including mastjie, Quaternius, Kenney, and CreativeTrio. See `public/models/README.md` for source URLs, file sizes, and conversion notes.
+
+Imported models are visual-only. The duel still uses procedural fallbacks and existing hit zones for gameplay readability.
 
 ## Controls
 

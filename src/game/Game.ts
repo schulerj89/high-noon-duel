@@ -1,4 +1,12 @@
 import * as THREE from "three";
+import { ModelManager } from "../assets/ModelManager";
+import {
+  ENEMY_CHARACTER_MODEL_BY_ID,
+  ENEMY_GUN_MODEL_ID,
+  PLAYER_GUN_MODEL_ID,
+  TOWN_MODEL_PLACEMENTS,
+  type TownModelPlacement
+} from "../assets/modelManifest";
 import { AudioManager } from "../audio/AudioManager";
 import type { VoiceAudioId } from "../audio/audioManifest";
 import { DevPanel, type CopyBalanceReportResult, type DevPanelSnapshot } from "../debug/DevPanel";
@@ -229,6 +237,8 @@ interface HighNoonDebugMetrics {
   phase: DuelPhase;
   screen: ScreenMode;
   lowDetailMode: boolean;
+  loadedAssetIds: readonly string[];
+  failedAssetIds: readonly string[];
   cameraPosition: readonly [number, number, number];
 }
 
@@ -268,6 +278,7 @@ export class Game {
   private readonly practiceTargetMeshes: THREE.Mesh[] = [];
   private readonly practiceTargetByMesh = new Map<THREE.Object3D, PracticeTargetSpec>();
   private readonly audio = new AudioManager();
+  private readonly models = new ModelManager();
   private readonly ui: UiElements;
   private readonly devPanel: DevPanel | null;
 
@@ -324,8 +335,12 @@ export class Game {
   private readonly queuedSubtitleTimers = new Set<number>();
   private enemyRig: EnemyRig | null = null;
   private gunGroup: THREE.Group | null = null;
+  private readonly playerGunFallbackParts: THREE.Object3D[] = [];
   private muzzleFlash: THREE.Mesh | null = null;
   private enemyMuzzleFlash: THREE.Mesh | null = null;
+  private enemyModelRequestId = 0;
+  private townModelRequestId = 0;
+  private playerGunModelRequestId = 0;
   private missDustGroup: THREE.Group | null = null;
   private missDustMaterial: THREE.MeshBasicMaterial | null = null;
   private hemisphereLight: THREE.HemisphereLight | null = null;
@@ -1054,6 +1069,8 @@ export class Game {
       return;
     }
 
+    const modelStats = this.models.getStats();
+
     window.__HIGH_NOON_DEBUG__ = {
       renderInfo: {
         calls: this.renderer.info.render.calls,
@@ -1065,6 +1082,8 @@ export class Game {
       phase: this.state.phase,
       screen: this.screenMode,
       lowDetailMode: this.settings.lowDetailMode,
+      loadedAssetIds: modelStats.loadedAssetIds,
+      failedAssetIds: modelStats.failedAssetIds,
       cameraPosition: [
         this.camera.position.x,
         this.camera.position.y,
@@ -1980,6 +1999,8 @@ export class Game {
     if (previousLowDetailMode !== this.settings.lowDetailMode) {
       this.rebuildTownScene();
       this.rebuildAtmosphereEffects();
+      this.rebuildEnemy();
+      this.rebuildPlayerGun();
       this.applyCurrentEnvironment();
     }
 
@@ -2779,6 +2800,44 @@ export class Game {
     this.groundMaterial = townScene.groundMaterial;
     this.streetMaterial = townScene.streetMaterial;
     this.scene.add(townScene.root);
+    this.addTownModelAccents(townScene, ++this.townModelRequestId);
+  }
+
+  private addTownModelAccents(townScene: TownScene, requestId: number): void {
+    if (this.settings.lowDetailMode) {
+      return;
+    }
+
+    for (const placement of TOWN_MODEL_PLACEMENTS) {
+      void this.addTownModelAccent(townScene, requestId, placement);
+    }
+  }
+
+  private async addTownModelAccent(
+    townScene: TownScene,
+    requestId: number,
+    placement: TownModelPlacement
+  ): Promise<void> {
+    const model = await this.models.clone(placement.assetId, {
+      castShadow: true,
+      receiveShadow: true
+    });
+
+    if (
+      !model ||
+      requestId !== this.townModelRequestId ||
+      this.townScene !== townScene ||
+      this.settings.lowDetailMode
+    ) {
+      this.disposeTransientModel(model);
+      return;
+    }
+
+    model.name = `town-model-${placement.assetId}`;
+    model.rotation.y = placement.rotationY;
+    this.fitModelToHeight(model, placement.targetHeight);
+    model.position.set(placement.position[0], placement.position[1], placement.position[2]);
+    townScene.root.add(model);
   }
 
   private addEnvironmentEffects(): void {
@@ -2809,6 +2868,8 @@ export class Game {
   }
 
   private rebuildTownScene(): void {
+    this.townModelRequestId += 1;
+
     if (this.townScene) {
       this.scene.remove(this.townScene.root);
       this.disposeObject(this.townScene.root);
@@ -2833,12 +2894,83 @@ export class Game {
 
   private addEnemy(): void {
     const rig = createEnemy(this.selectedEnemy);
+    const requestId = ++this.enemyModelRequestId;
 
     this.enemyRig = rig;
     this.enemyMuzzleFlash = rig.muzzleFlash;
     this.addHitZones(rig);
     this.scene.add(rig.root);
     this.updateEnemyVisual();
+    this.addImportedEnemyVisuals(rig, this.selectedEnemy, requestId);
+  }
+
+  private addImportedEnemyVisuals(
+    rig: EnemyRig,
+    enemy: EnemyDefinition,
+    requestId: number
+  ): void {
+    if (this.settings.lowDetailMode) {
+      return;
+    }
+
+    const characterModelId = ENEMY_CHARACTER_MODEL_BY_ID[enemy.id];
+
+    if (characterModelId) {
+      void this.addImportedEnemyCharacter(rig, characterModelId, requestId);
+    }
+
+    void this.addImportedEnemyGun(rig, requestId);
+  }
+
+  private async addImportedEnemyCharacter(
+    rig: EnemyRig,
+    modelId: NonNullable<(typeof ENEMY_CHARACTER_MODEL_BY_ID)[string]>,
+    requestId: number
+  ): Promise<void> {
+    const model = await this.models.clone(modelId, {
+      castShadow: true,
+      receiveShadow: true
+    });
+
+    if (
+      !model ||
+      requestId !== this.enemyModelRequestId ||
+      this.enemyRig !== rig ||
+      this.settings.lowDetailMode
+    ) {
+      this.disposeTransientModel(model);
+      return;
+    }
+
+    model.name = `enemy-model-${modelId}`;
+    model.rotation.y = Math.PI;
+    this.fitModelToHeight(model, 2.15);
+    model.position.set(0, 0, -0.08);
+    rig.root.add(model);
+  }
+
+  private async addImportedEnemyGun(rig: EnemyRig, requestId: number): Promise<void> {
+    const model = await this.models.clone(ENEMY_GUN_MODEL_ID, {
+      castShadow: true,
+      receiveShadow: true
+    });
+
+    if (
+      !model ||
+      requestId !== this.enemyModelRequestId ||
+      this.enemyRig !== rig ||
+      this.settings.lowDetailMode
+    ) {
+      this.disposeTransientModel(model);
+      return;
+    }
+
+    model.name = "enemy-gun-model";
+    model.rotation.y = -Math.PI / 2;
+    this.fitModelToMaxDimension(model, 0.36);
+    model.position.set(0.01, -0.02, 0.14);
+    this.hideProceduralGunParts(rig.gun);
+    rig.gun.add(model);
   }
 
   private updateEnemyVisual(): void {
@@ -2854,6 +2986,7 @@ export class Game {
   }
 
   private rebuildEnemy(): void {
+    this.enemyModelRequestId += 1;
     this.clearHitZones();
 
     if (this.enemyRig) {
@@ -2864,6 +2997,20 @@ export class Game {
     this.enemyRig = null;
     this.enemyMuzzleFlash = null;
     this.addEnemy();
+  }
+
+  private rebuildPlayerGun(): void {
+    this.playerGunModelRequestId += 1;
+
+    if (this.gunGroup) {
+      this.camera.remove(this.gunGroup);
+      this.disposeObject(this.gunGroup);
+      this.gunGroup = null;
+      this.muzzleFlash = null;
+    }
+
+    this.playerGunFallbackParts.length = 0;
+    this.addGun();
   }
 
   private clearHitZones(): void {
@@ -2938,7 +3085,7 @@ export class Game {
   private disposeMaterial(material: THREE.Material | THREE.Material[]): void {
     if (Array.isArray(material)) {
       for (const item of material) {
-        item.dispose();
+        this.disposeMaterial(item);
       }
       return;
     }
@@ -3097,6 +3244,7 @@ export class Game {
 
   private addGun(): void {
     const group = new THREE.Group();
+    const requestId = ++this.playerGunModelRequestId;
     group.position.set(0.38, -0.62, -1.1);
     group.rotation.set(-0.08, -0.28, -0.08);
 
@@ -3104,18 +3252,22 @@ export class Game {
     const grip = new THREE.MeshStandardMaterial({ color: "#6c3425", roughness: 0.7 });
 
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 0.58, 12), metal);
+    barrel.name = "player-gun-fallback-barrel";
     barrel.rotation.x = Math.PI / 2;
     barrel.position.set(0, 0.02, -0.34);
 
     const chamber = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.18, 16), metal);
+    chamber.name = "player-gun-fallback-chamber";
     chamber.rotation.x = Math.PI / 2;
     chamber.position.set(0, 0, -0.08);
 
     const handle = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.38, 0.12), grip);
+    handle.name = "player-gun-fallback-handle";
     handle.position.set(0.05, -0.26, 0.04);
     handle.rotation.z = -0.28;
 
     const trigger = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.012, 8, 12), metal);
+    trigger.name = "player-gun-fallback-trigger";
     trigger.position.set(0, -0.13, -0.02);
     trigger.rotation.x = Math.PI / 2;
 
@@ -3128,9 +3280,89 @@ export class Game {
     flash.visible = false;
 
     group.add(barrel, chamber, handle, trigger, flash);
+    this.playerGunFallbackParts.splice(0, this.playerGunFallbackParts.length, barrel, chamber, handle, trigger);
     this.camera.add(group);
     this.gunGroup = group;
     this.muzzleFlash = flash;
+    this.addImportedPlayerGun(group, requestId);
+  }
+
+  private async addImportedPlayerGun(group: THREE.Group, requestId: number): Promise<void> {
+    if (this.settings.lowDetailMode) {
+      return;
+    }
+
+    const model = await this.models.clone(PLAYER_GUN_MODEL_ID, {
+      castShadow: false,
+      receiveShadow: false
+    });
+
+    if (
+      !model ||
+      requestId !== this.playerGunModelRequestId ||
+      this.gunGroup !== group ||
+      this.settings.lowDetailMode
+    ) {
+      this.disposeTransientModel(model);
+      return;
+    }
+
+    model.name = "player-gun-model";
+    model.rotation.y = Math.PI / 2;
+    this.fitModelToMaxDimension(model, 0.72);
+    model.position.set(0.02, -0.04, -0.16);
+    this.setPlayerGunFallbackVisible(false);
+    group.add(model);
+  }
+
+  private setPlayerGunFallbackVisible(visible: boolean): void {
+    for (const part of this.playerGunFallbackParts) {
+      part.visible = visible;
+    }
+  }
+
+  private hideProceduralGunParts(gun: THREE.Group): void {
+    for (const child of gun.children) {
+      if (child !== this.enemyMuzzleFlash && child.name !== "enemy-muzzle-flash") {
+        child.visible = false;
+      }
+    }
+  }
+
+  private fitModelToHeight(model: THREE.Object3D, targetHeight: number): void {
+    this.fitModelToDimension(model, targetHeight, "height");
+  }
+
+  private fitModelToMaxDimension(model: THREE.Object3D, targetSize: number): void {
+    this.fitModelToDimension(model, targetSize, "max");
+  }
+
+  private fitModelToDimension(
+    model: THREE.Object3D,
+    targetSize: number,
+    mode: "height" | "max"
+  ): void {
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    const currentSize =
+      mode === "height"
+        ? size.y
+        : Math.max(size.x, size.y, size.z);
+
+    if (currentSize <= 0) {
+      return;
+    }
+
+    model.scale.multiplyScalar(targetSize / currentSize);
+    model.updateMatrixWorld(true);
+    const fittedBox = new THREE.Box3().setFromObject(model);
+    model.position.y -= fittedBox.min.y;
+  }
+
+  private disposeTransientModel(model: THREE.Object3D | null): void {
+    if (model) {
+      this.disposeObject(model);
+    }
   }
 
   private createOverlay(): UiElements {
